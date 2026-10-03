@@ -1,27 +1,10 @@
 "use strict";
 
-/**
- * extract.js
- *
- * Extracts candidate utility functions from a TypeScript source file using
- * the TypeScript compiler API. A "utility function" here is a top-level or
- * module-level function / arrow-function binding that is NOT a React
- * component (no JSX return, name not PascalCase-with-JSX) and NOT a test /
- * story callback.
- *
- * For each candidate we compute:
- *   - the normalized signature (signature.js)
- *   - the normalized body token stream (signature.js#bodyTokens)
- *   - source location (line/column) for reporting
- *
- * The result is a list of FunctionRecord objects the matcher and the rule
- * both consume.
- */
-
 const fs = require("node:fs");
 const path = require("node:path");
 
 const { computeSignature, functionName, bodyTokens } = require("./signature");
+const { map } = require("remeda");
 
 let ts;
 try {
@@ -30,29 +13,14 @@ try {
 	ts = null;
 }
 
-/**
- * Is this function node a React component (PascalCase name + JSX in body)?
- * Components are out of scope for this rule (RDU covers them).
- *
- * @param {ts.Node} node the function node
- * @param {ts.SourceFile} sourceFile
- * @returns {boolean}
- */
-function isComponent(node, sourceFile) {
+const isComponent = (node, sourceFile) => {
 	const name = functionName(node, sourceFile);
 	if (!/^[A-Z]/.test(name)) return false;
 	const text = node.getText(sourceFile);
 	return /<([A-Z][A-Za-z0-9]*)[\s/>]|<\/[A-Z]/.test(text);
-}
+};
 
-/**
- * Is this function a test/story callback (describe/it/test/expect/beforeEach
- * / beforeEach / play / setup)?
- *
- * @param {ts.Node} node the function node
- * @returns {boolean}
- */
-function isTestCallback(node) {
+const isTestCallback = (node) => {
 	let p = node.parent;
 	let hops = 0;
 	while (p && hops < 4) {
@@ -66,16 +34,9 @@ function isTestCallback(node) {
 		hops += 1;
 	}
 	return false;
-}
+};
 
-/**
- * Is this function exported (directly or via a re-export)? Only exported
- * functions are importable duplicates; private helpers are internal detail.
- *
- * @param {ts.Node} node the function node
- * @returns {boolean}
- */
-function isExported(node) {
+const isExported = (node) => {
 	let p = node;
 	while (p) {
 		if (p.kind === ts.SyntaxKind.ExportDeclaration || p.kind === ts.SyntaxKind.ExportAssignment) return true;
@@ -83,24 +44,9 @@ function isExported(node) {
 		p = p.parent;
 	}
 	return false;
-}
+};
 
-/**
- * Is this function a top-level module utility? A utility is a function whose
- * owning declaration sits directly under the source file:
- *   - a `function foo() {}` declaration, or
- *   - a `const foo = () => {}` / `const foo = function(){}` initializer.
- *
- * Arrow functions nested inside an object literal (`{ render: (r) => … }`),
- * a callback, or another function are NOT top-level utilities — they are
- * structural parts of a component/record, not standalone helpers. This is a
- * purely structural test (no name matching).
- *
- * @param {ts.Node} node the function node
- * @param {ts.SourceFile} sourceFile
- * @returns {boolean}
- */
-function isTopLevelUtility(node, sourceFile) {
+const isTopLevelUtility = (node, sourceFile) => {
 	let statement;
 	if (node.kind === ts.SyntaxKind.FunctionDeclaration) {
 		statement = node;
@@ -119,16 +65,9 @@ function isTopLevelUtility(node, sourceFile) {
 	let owner = statement.parent;
 	if (owner && owner.kind === ts.SyntaxKind.ExportDeclaration) owner = owner.parent;
 	return owner === sourceFile;
-}
+};
 
-/**
- * Collect the top-level function candidates in a source file.
- *
- * @param {ts.SourceFile} sourceFile
- * @param {ts.TypeChecker} checker
- * @returns {Array} raw candidate nodes
- */
-function collectFunctionNodes(sourceFile, checker) {
+const collectFunctionNodes = (sourceFile, checker) => {
 	const out = [];
 	const visit = (node) => {
 		const isFn =
@@ -137,23 +76,15 @@ function collectFunctionNodes(sourceFile, checker) {
 			node.kind === ts.SyntaxKind.FunctionExpression;
 		if (isFn) {
 			if (isTopLevelUtility(node, sourceFile)) out.push(node);
-			return; // do not descend into nested functions for top-level scan
+			return;
 		}
 		ts.forEachChild(node, visit);
 	};
 	visit(sourceFile);
 	return out;
-}
+};
 
-/**
- * Extract utility-function records from a single file.
- *
- * @param {string} filePath absolute path
- * @param {object} [opts]
- * @param {boolean} [opts.requireExported] only exported functions
- * @returns {Array<object>} FunctionRecord[]
- */
-function extractFromFile(filePath, opts = {}, shared = {}) {
+const extractFromFile = (filePath, opts = {}, shared = {}) => {
 	if (!ts) return [];
 	const checker = shared.checker || null;
 	let sourceFile = shared.sourceFile || null;
@@ -163,14 +94,13 @@ function extractFromFile(filePath, opts = {}, shared = {}) {
 	}
 
 	const requireExported = opts.requireExported === true;
-	const records = [];
 
-	for (const node of collectFunctionNodes(sourceFile, checker)) {
+	return map(collectFunctionNodes(sourceFile, checker), (node) => {
 		const name = functionName(node, sourceFile);
-		if (name === "<anonymous>") continue;
-		if (isComponent(node, sourceFile)) continue;
-		if (isTestCallback(node)) continue;
-		if (requireExported && !isExported(node)) continue;
+		if (name === "<anonymous>") return null;
+		if (isComponent(node, sourceFile)) return null;
+		if (isTestCallback(node)) return null;
+		if (requireExported && !isExported(node)) return null;
 
 		const sig = computeSignature(node, checker, sourceFile);
 		const bodyText = node.body ? node.body.getText(sourceFile) : "";
@@ -180,7 +110,7 @@ function extractFromFile(filePath, opts = {}, shared = {}) {
 		const endPos = node.getEnd ? node.getEnd() : node.getStart() + node.getText(sourceFile).length;
 		const endLine = sourceFile.getLineAndCharacterOfPosition(endPos).line + 1;
 
-		records.push({
+		return {
 			name,
 			path: filePath,
 			line: line + 1,
@@ -192,22 +122,12 @@ function extractFromFile(filePath, opts = {}, shared = {}) {
 			bodyTokens: tokens,
 			bodyTokenCount: tokens.length,
 			exported: isExported(node),
-		});
-	}
+		};
+	}).filter(Boolean);
+};
 
-	return records;
-}
-
-/**
- * Extract from many files at once.
- *
- * @param {string[]} filePaths absolute paths
- * @param {object} [opts]
- * @returns {Array<object>}
- */
-function extractFromFiles(filePaths, opts = {}) {
-	const out = [];
-	if (!ts || filePaths.length === 0) return out;
+const extractFromFiles = (filePaths, opts = {}) => {
+	if (!ts || filePaths.length === 0) return [];
 
 	const norm = (p) => p.replace(/\\/g, "/").toLowerCase();
 	let checker = null;
@@ -224,14 +144,14 @@ function extractFromFiles(filePaths, opts = {}) {
 		checker = null;
 	}
 
+	const out = [];
 	for (const f of filePaths) {
 		try {
 			out.push(...extractFromFile(f, opts, { checker, sourceFile: sourceFiles.get(norm(f)) || null }));
 		} catch {
-			// unreadable / unparseable file — skip
 		}
 	}
 	return out;
-}
+};
 
 module.exports = { extractFromFile, extractFromFiles, isComponent, isExported, isTestCallback };

@@ -2,62 +2,61 @@
 
 ESLint rule + CLI scanner that finds **duplicate utility functions** across a
 TypeScript codebase. It is the utilities counterpart of
-`@md-code/react-component-uniqueness` (RCU): RCU catches duplicated React
+`@md-code/react-component-uniqueness` (RDU): RDU catches duplicated React
 components, this package catches duplicated plain functions.
 
-## How it works
+Two pieces:
 
-```mermaid
-flowchart TD
-    A["Utils folders<br/>(walk, extract via TS compiler API)<br/>drops: test/story/build files,<br/>components, test callbacks, anonymous"] --> N
+1. **Scanner (CLI)** — walks your utils folders, extracts every utility
+   function with the TypeScript compiler API, cross-checks them with a
+   token-level **jscpd** pass, and writes a JSON catalog of functions and
+   duplicate clusters.
+2. **ESLint rule** — `md-code/utils-uniqueness` matches app code
+   against that catalog and reports every function that duplicates a catalog
+   entry.
 
-    N["normalize<br/>strings, comments, identifiers blanked<br/>keywords + uppercase tokens kept"]
-
-    subgraph match["Match"]
-        T1["signature<br/>identical normalized signature"]
-        T2["body<br/>Jaccard of body tokens ≥ 0.6"]
-        T3["jscpd<br/>raw token-level clones"]
-    end
-
-    N --> T1
-    N --> T2
-    N --> T3
-
-    subgraph filter["Filter"]
-        F1["min body tokens"]
-        F1 --> F2["has shape<br/>(params / non-void)"]
-        F2 --> F3["distinctiveness<br/>drop boilerplate"]
-    end
-
-    T1 --> F1
-    T2 --> F1
-    T3 --> F1
-
-    F3 --> C[("catalog.json<br/>functions + duplicate clusters")]
-    C --> R["report"]
-```
-
-1. Extract functions from utils folders.
-2. Normalize bodies (names blanked, keywords kept).
-3. Cluster by 3 tiers: signature, body, jscpd.
-4. Filter boilerplate (min tokens, distinctiveness).
-5. Write catalog + report.
-6. ESLint rule flags app code in a cluster.
-
-## Quick start
+## Install
 
 ```sh
-bun add -D @md-code/utils-uniqueness
+npm i -D @md-code/utils-uniqueness
 ```
+
+Peer dependency: `eslint >= 8.40`.
+
+`typescript` is bundled (v5.x) rather than a peer: the rule drives the
+TypeScript compiler API to parse your files, and TypeScript 7 (the Go rewrite)
+ships no JS compiler API — so the package pins its own 5.x and uses it
+regardless of the version installed in your project.
+
+## CLI (build the catalog)
+
+```sh
+md-code-utils-uniqueness --roots core/utils:core/ehr/_db --report
+```
+
+Options:
+
+| Flag | Meaning |
+| --- | --- |
+| `--roots <d1>:<d2>` | Utils directories to catalog (repo-relative or absolute). Required unless the rule options in `eslint.config.js` define `utilsFolder`. |
+| `--out <file>` | Catalog path. Default `reports/utils-catalog.json`. |
+| `--repo-root <dir>` | Repo root. Default: discovered by walking up. |
+| `--app-roots <d1>:<d2>` | Extra roots for the jscpd pass only (default: repo root). |
+| `--no-jscpd` | Skip the jscpd raw-clone source. |
+| `--check` | CI gate: exit 1 when the catalog would change. |
+| `--report [file]` | Write the Markdown duplicate report (default `reports/utils-duplicates.md`). |
+| `--verbose` | Log per-stage counts. |
+
+## ESLint rule
 
 ```js
 // eslint.config.js
-const utilsUniq = require("@md-code/utils-uniqueness/plugin");
+import jsts from "@md-code/utils-uniqueness/plugin";
 
-module.exports = [
+export default [
   {
     files: ["**/*.ts", "**/*.tsx"],
-    plugins: { "md-code": utilsUniq },
+    plugins: { "md-code": jsts },
     rules: {
       "md-code/utils-uniqueness": [
         "warn",
@@ -71,58 +70,59 @@ module.exports = [
 ];
 ```
 
-The catalog is generated automatically on the first lint when the file is
-missing (from the `utilsFolder` option) — it is gitignored and never
-committed. You can also generate it explicitly:
+The rule reports `duplicateUtility` for every function whose body matches a
+catalog cluster (by exact path+line), and `missingCatalog` when the catalog
+file does not exist yet.
 
-```sh
-bunx md-code-utils-uniqueness --roots core/utils:core/ehr/_db --report
-```
+### Rule options
 
-## CLI
-
-```sh
-bunx md-code-utils-uniqueness [flags]
-```
-
-| Flag | Description |
-| --- | --- |
-| `--roots a:b` | Utils directories to catalog (overrides `utilsFolder`) |
-| `--out <file>` | Catalog output path (default `reports/utils-catalog.json`) |
-| `--app-roots a:b` | Extra roots for the jscpd pass only (default: repo root) |
-| `--no-jscpd` | Skip the jscpd raw-clone source |
-| `--check` | CI gate — exit 1 if catalog is stale |
-| `--report [file]` | Write the Markdown duplicate report |
-| `--verbose` | Log per-stage counts |
-| `--repo-root <dir>` | Repo root (default: auto-discovered) |
-
-## What it flags
-
-| Tier | Meaning |
-| --- | --- |
-| `signature` | Identical normalized signature (name + params + return) |
-| `body` | Jaccard similarity of normalized body tokens ≥ `bodyMinRatio` |
-| `jscpd` | Raw token-level clone reported by jscpd (unfiltered) |
-
-## Options (rule config)
-
-| Option | Default | Notes |
+| Option | Default | Meaning |
 | --- | --- | --- |
-| `catalogPath` | `reports/utils-catalog.json` | Inline catalog object or path |
-| `utilsFolder` | — | Utils folders; required for the scanner when `--roots` is absent |
-| `include` / `exclude` | sensible defaults | Minimatch filters for the scanner |
-| `useJscpd` | `true` | Enable the jscpd raw-clone source |
-| `jscpdMinTokens` / `jscpdSimilarity` | `20` / `0.7` | jscpd thresholds |
-| `debt` | `reports/lint-debt.json` | Debt ledger; `false` to disable |
-| `thresholds` | built-in | `minBodyTokens`, `signatureExact`, `bodyMinRatio`, `requireExported` |
+| `catalog` / `catalogPath` | `reports/utils-catalog.json` | Inline catalog object or path to the catalog file. |
+| `utilsFolder` | — | Utils folders (string or `{ path }`). Required for the scanner when `--roots` is absent. |
+| `include` / `exclude` | sensible defaults | Minimatch filters for the scanner. |
+| `useJscpd` | `true` | Enable the jscpd raw-clone source in the scanner. |
+| `jscpdMinTokens` / `jscpdSimilarity` | `20` / `0.7` | jscpd thresholds. |
+| `debt` | — | `false` to disable the debt ledger, `true` for the default `reports/lint-debt.json`, or a path. Findings listed in the ledger are suppressed. |
+| `root` | discovered | Repo root for resolving relative paths. |
+| `thresholds` | see below | Matching thresholds. |
 
-## Notes
+### Thresholds
 
-- `typescript` is bundled (v5.x) rather than a peer: the rule drives the
-  TypeScript compiler API, and TypeScript 7 (the Go rewrite) ships no JS
-  compiler API — the package pins its own 5.x regardless of your project.
-- React components and test/story callbacks are excluded from extraction.
-- The debt ledger is file-scoped: any finding in a listed file is suppressed
-  (key format `<path>::<ruleId>`, shrink-only).
-- Everything is plain Node + `fs`/`path` — works identically on Linux, macOS,
-  Windows.
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `minBodyTokens` | `8` | Minimum normalized body tokens to be considered a utility. |
+| `signatureExact` | `true` | Cluster by exact normalized signature. |
+| `bodyMinRatio` | `0.6` | Jaccard ratio on normalized body tokens for the body tier. |
+| `jscpdMinTokens` / `jscpdSimilarity` | `20` / `0.7` | jscpd tier. |
+| `requireExported` | `false` | Only catalog exported functions. |
+
+## How duplicates are found
+
+Three tiers, strongest first:
+
+1. **signature** — identical normalized signature (name + params + return).
+2. **body** — Jaccard similarity of normalized body token streams
+   (strings, comments and identifiers blanked; keywords and uppercase tokens
+   kept) above `bodyMinRatio`.
+3. **jscpd** — raw token-level clones reported by the jscpd CLI, which is
+   unfiltered: it catches clones the two AST tiers miss (renamed parameters,
+   reordered statements, partially shared bodies).
+
+React components and test/story callbacks are excluded from extraction.
+
+## Debt ledger
+
+To keep a clean baseline while you migrate, list known files in
+`reports/lint-debt.json`. The ledger is file-scoped: any finding in a listed
+file is suppressed.
+
+```json
+{
+  "core/ehr/_db/fhir.ts::utils-uniqueness": 3
+}
+```
+
+Keys are `<repo-relative file path>::<ruleId>`; the value is the finding count
+(bookkeeping — the rule only checks key presence). The ledger is shrink-only:
+a key must be removed once the file is clean.

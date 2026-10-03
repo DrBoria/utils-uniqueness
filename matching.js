@@ -1,59 +1,17 @@
 "use strict";
 
-/**
- * matching.js
- *
- * Tiered duplicate-utility matcher. Given a list of FunctionRecord objects
- * (from extract.js) plus optional raw jscpd clone pairs, produce duplicate
- * clusters with a tier label and a human-readable reason.
- *
- * Tiers (strongest first):
- *   1. signature — same name + identical normalized param/return types.
- *   2. body      — same name + Jaccard body-token similarity >= bodyMinRatio.
- *   3. jscpd     — a jscpd clone covering (at least) minCoverage of both
- *                  functions' line spans: a renamed whole-function copy.
- *   4. fragment  — a jscpd clone that is substantial (minTokens/minLines) and
- *                  content-specific (distinctiveRatio >= minDistinctiveRatio)
- *                  but only covers part of two larger functions: a shared
- *                  error handler / mapper / paging loop.
- *
- * Tiers 3 and 4 are the only ones that can catch renamed clones, since they
- * match on token content, not name.
- *
- * Tiers 1 and 2 require the same function name: a duplicated utility keeps
- * its name, so this keeps unrelated helpers that happen to share a shape
- * (e.g. many `string -> Temporal.PlainDate` converters) from over-clustering.
- * A pair is reported at the strongest tier that fires. Clusters are built by
- * union-find over reported pairs so a chain of dups collapses into one group
- * with a canonical (most-exported / longest-body) representative.
- */
-
 const { jaccard, distinctiveRatio } = require("./signature");
+const { sort, first } = require("remeda");
 
-/**
- * A return type is "void-like" when it carries no payload: `void`, `undefined`,
- * or a promise of either. Such a shape is shared by every entry point (`main`)
- * and every fire-and-forget callback, so a zero-param + void-like signature is
- * not a meaningful duplicate.
- *
- * @param {string} returns normalized return type
- * @returns {boolean}
- */
-function isVoidLike(returns) {
+const isVoidLike = (returns) => {
 	const r = String(returns || "").trim();
 	if (r === "" || r === "?" || r === "void" || r === "undefined" || r === "null") return true;
 	const m = r.match(/^Promise<(.+)>$/);
 	if (m) return isVoidLike(m[1]);
 	return false;
-}
+};
 
-/**
- * Build a union-find over an index set.
- *
- * @param {number} n size
- * @returns {{find:(i:number)=>number, union:(i:number,j:number)=>void}}
- */
-function makeUnionFind(n) {
+const makeUnionFind = (n) => {
 	const parent = Array.from({ length: n }, (_, i) => i);
 	const find = (i) => {
 		while (parent[i] !== i) {
@@ -68,17 +26,27 @@ function makeUnionFind(n) {
 		if (ri !== rj) parent[rj] = ri;
 	};
 	return { find, union };
-}
+};
 
-/**
- * Match a list of function records into duplicate clusters.
- *
- * @param {Array<object>} records FunctionRecord[]
- * @param {object} thresholds resolved thresholds (thresholds.js)
- * @param {Array<object>} [jscpdPairs] raw jscpd clone pairs {a, b} index refs or {path,line}
- * @returns {{clusters: Array<object>, pairs: Array<object>}}
- */
-function match(records, thresholds, jscpdPairs = []) {
+const indexOfRecord = (records, ref) => {
+	if (!ref) return -1;
+	if (typeof ref === "number") return ref >= 0 && ref < records.length ? ref : -1;
+	if (ref.path) {
+		const i = records.findIndex((r) => {
+			if (r.path !== ref.path) return false;
+			if (ref.line === undefined) return true;
+			return ref.line >= r.line && ref.line <= (r.endLine ?? r.line);
+		});
+		if (i !== -1) return i;
+	}
+	if (ref.name) {
+		const i = records.findIndex((r) => r.name === ref.name);
+		if (i !== -1) return i;
+	}
+	return -1;
+};
+
+const match = (records, thresholds, jscpdPairs = []) => {
 	const n = records.length;
 	const uf = makeUnionFind(n);
 	const pairs = [];
@@ -94,7 +62,6 @@ function match(records, thresholds, jscpdPairs = []) {
 		pairs.push({ a: i, b: j, tier, reason });
 	};
 
-	// Tier 1: signature index (same name + identical normalized signature).
 	const bySig = new Map();
 	records.forEach((r, i) => {
 		if (r.bodyTokenCount < thresholds.minBodyTokens) return;
@@ -117,7 +84,6 @@ function match(records, thresholds, jscpdPairs = []) {
 		}
 	}
 
-	// Tier 2: body similarity (same name, pairs not already signature-linked).
 	const byName = new Map();
 	records.forEach((r, i) => {
 		if (r.bodyTokenCount < thresholds.minBodyTokens) return;
@@ -144,11 +110,6 @@ function match(records, thresholds, jscpdPairs = []) {
 		}
 	}
 
-	// Tier 3: raw jscpd clone pairs, split into whole-function clones and
-	// substantial content-specific fragments. jscpd matches at token level, so
-	// a clone may cover all of two functions (a renamed copy) or just a chunk
-	// inside two larger ones (a shared error handler / mapper / paging loop).
-	// Low-coverage, low-distinctiveness clones are boilerplate and dropped.
 	const jconf = thresholds.jscpd || {};
 	const whole = jconf.whole || {};
 	const frag = jconf.fragment || {};
@@ -178,7 +139,6 @@ function match(records, thresholds, jscpdPairs = []) {
 		}
 	}
 
-	// Cluster by union-find root.
 	const byRoot = new Map();
 	for (let i = 0; i < n; i += 1) {
 		const root = uf.find(i);
@@ -211,49 +171,15 @@ function match(records, thresholds, jscpdPairs = []) {
 	clusters.sort((a, b) => b.members.length - a.members.length);
 
 	return { clusters, pairs };
-}
+};
 
-/**
- * Pick the canonical representative: prefer exported, then longest body,
- * then first-seen.
- *
- * @param {Array<object>} recs
- * @returns {object}
- */
-function pickCanonical(recs) {
-	return [...recs].sort((a, b) => {
-		if (a.exported !== b.exported) return a.exported ? -1 : 1;
-		if (b.bodyTokenCount !== a.bodyTokenCount) return b.bodyTokenCount - a.bodyTokenCount;
-		return 0;
-	})[0];
-}
-
-/**
- * Find the index of a record matching a jscpd pair endpoint ({path, line}).
- * The line is the 1-based start line of the clone; it matches the record
- * whose [line, endLine] range contains it (jscpd's clone start sits inside
- * the function body, not necessarily on the declaration line).
- *
- * @param {Array<object>} records
- * @param {{path?:string, line?:number, name?:string}} ref
- * @returns {number} -1 when not found
- */
-function indexOfRecord(records, ref) {
-	if (!ref) return -1;
-	if (typeof ref === "number") return ref >= 0 && ref < records.length ? ref : -1;
-	if (ref.path) {
-		const i = records.findIndex((r) => {
-			if (r.path !== ref.path) return false;
-			if (ref.line === undefined) return true;
-			return ref.line >= r.line && ref.line <= (r.endLine ?? r.line);
-		});
-		if (i !== -1) return i;
-	}
-	if (ref.name) {
-		const i = records.findIndex((r) => r.name === ref.name);
-		if (i !== -1) return i;
-	}
-	return -1;
-}
+const pickCanonical = (recs) =>
+	first(
+		sort([...recs], (a, b) => {
+			if (a.exported !== b.exported) return a.exported ? -1 : 1;
+			if (b.bodyTokenCount !== a.bodyTokenCount) return b.bodyTokenCount - a.bodyTokenCount;
+			return 0;
+		}),
+	);
 
 module.exports = { match, makeUnionFind, pickCanonical };

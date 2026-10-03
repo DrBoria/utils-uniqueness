@@ -1,173 +1,13 @@
 "use strict";
 
-/**
- * signature.js
- *
- * Utility-function signature machinery shared by the rule and the scanner.
- *
- * A Signature is the normalized, rename-insensitive description of one
- * function:
- *
- *   {
- *     name:   "inTimeOrder",
- *     params: ["Temporal.ZonedDateTime", "Temporal.ZonedDateTime"], // normalized param types
- *     returns: "boolean",                                          // normalized return type
- *     generic: "T0",                                               // normalized generic arity marker
- *   }
- *
- * Two functions are signature-duplicates when their normalized param-type
- * list AND return type are identical — i.e. one is a drop-in for the other.
- * Generic type parameters are renamed positionally (T, S, U -> T0, T1, T2)
- * so `f<T>(x: T): T` and `g<S>(y: S): S` match.
- *
- * The normalized body token stream is computed separately (extract.js) for
- * the body-similarity tier.
- */
-
 const path = require("node:path");
+const { pipe, map, filter, sort, reduce } = require("remeda");
 
 let ts;
 try {
 	ts = require("typescript");
 } catch {
 	ts = null;
-}
-
-/**
- * Build a positional rename map for a function's type parameters.
- * `function f<T, S, U>(...)` -> { T: "T0", S: "T1", U: "T2" }.
- *
- * @param {ts.TypeParameterDeclaration[]} typeParams
- * @returns {Record<string, string>}
- */
-function genericRenameMap(typeParams) {
-	const map = {};
-	(typeParams || []).forEach((tp, i) => {
-		const name = tp.name ? tp.name.text : "";
-		if (name) map[name] = `T${i}`;
-	});
-	return map;
-}
-
-/**
- * Normalize a type's source text: apply the generic rename map, collapse
- * whitespace, and strip redundant spaces around punctuation.
- *
- * @param {string} text raw type text
- * @param {Record<string, string>} rename generic rename map
- * @returns {string}
- */
-function normalizeTypeText(text, rename) {
-	let out = String(text || "");
-	for (const [from, to] of Object.entries(rename)) {
-		if (!from) continue;
-		out = out.replace(new RegExp(`\\b${escapeRe(from)}\\b`, "g"), to);
-	}
-	return out
-		.replace(/\s+/g, " ")
-		.replace(/\s*([<>,()|&?:])\s*/g, "$1")
-		.trim();
-}
-
-function escapeRe(s) {
-	return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-/**
- * Compute the normalized signature of a function declaration node.
- *
- * @param {ts.Node} node a FunctionDeclaration, ArrowFunction, or FunctionExpression
- * @param {ts.TypeChecker} checker the TS type checker
- * @param {ts.SourceFile} sourceFile the owning source file
- * @returns {{name:string, params:string[], returns:string, signatureKey:string}}
- */
-function computeSignature(node, checker, sourceFile) {
-	const name = functionName(node, sourceFile);
-
-	let typeParams = [];
-	if (node.typeParameters) typeParams = node.typeParameters;
-	else if (node.parent && node.parent.kind === ts.SyntaxKind.FunctionDeclaration && node.parent.typeParameters) {
-		typeParams = node.parent.typeParameters;
-	}
-	const rename = genericRenameMap(typeParams);
-
-	const params = (node.parameters || []).map((p) => {
-		if (p.type) {
-			return normalizeTypeText(p.type.getText(sourceFile), rename);
-		}
-		// No annotation: infer from the checker when available.
-		if (checker) {
-			try {
-				const t = checker.getTypeAtLocation(p.name);
-				return normalizeTypeText(checker.typeToString(t, undefined, ts.TypeFormatFlags.NoTruncation), rename);
-			} catch {
-				return "?";
-			}
-		}
-		return "?";
-	});
-
-	let returns = "?";
-	if (checker) {
-		try {
-			const sig = checker.getSignatureFromDeclaration(node);
-			if (sig) {
-				const rt = checker.getTypeOfSignatureReturnType(sig);
-				returns = normalizeTypeText(checker.typeToString(rt, undefined, ts.TypeFormatFlags.NoTruncation), rename);
-			}
-		} catch {
-			// fall through to annotation
-		}
-	}
-	if (returns === "?" && node.type) {
-		returns = normalizeTypeText(node.type.getText(sourceFile), rename);
-	}
-
-	const signatureKey = `${params.join("|")}::${returns}`;
-	return { name, params, returns, signatureKey };
-}
-
-/**
- * Resolve a function's display name. Arrow functions assigned to a binding
- * use the binding name; function declarations use their id; anonymous
- * functions get a positional placeholder.
- *
- * @param {ts.Node} node the function node
- * @param {ts.SourceFile} sourceFile
- * @returns {string}
- */
-function functionName(node, sourceFile) {
-	if (node.name && node.name.text) return node.name.text;
-	const parent = node.parent;
-	if (parent) {
-		if (parent.kind === ts.SyntaxKind.VariableDeclaration && parent.name && parent.name.getText) {
-			return parent.name.getText(sourceFile);
-		}
-		if (parent.kind === ts.SyntaxKind.PropertyAssignment && parent.name && parent.name.getText) {
-			return parent.name.getText(sourceFile);
-		}
-	}
-	return "<anonymous>";
-}
-
-/**
- * Tokenize a function body into a normalized stream for similarity.
- * Identifiers are dropped (they rename freely); keywords, literals, and
- * punctuation are kept. String/template literal contents are blanked.
- *
- * @param {string} bodyText raw body source text
- * @returns {string[]} sorted token multiset (as a joined string)
- */
-function bodyTokens(bodyText) {
-	const text = String(bodyText || "")
-		.replace(/`(?:[^`\\]|\\.)*`/g, " `TPL` ")
-		.replace(/"(?:[^"\\]|\\.)*"/g, " STR ")
-		.replace(/'(?:[^'\\]|\\.)*'/g, " STR ")
-		.replace(/\/\/[^\n]*/g, " ")
-		.replace(/\/\*[\s\S]*?\*\//g, " ");
-	const tokens = text.split(/[^A-Za-z0-9_$]+/).filter(Boolean);
-	const kept = tokens.filter((t) => !/^[a-z_$]/.test(t) || isKeyword(t));
-	return kept.sort();
 }
 
 const KEYWORDS = new Set([
@@ -186,23 +26,99 @@ const KEYWORDS = new Set([
 	"reverse", "fill", "copyWithin", "assign", "create", "freeze", "entries", "from", "is",
 ]);
 
-function isKeyword(t) {
-	return KEYWORDS.has(t);
-}
+const isKeyword = (t) => KEYWORDS.has(t);
 
-/**
- * Tokenize a code fragment keeping EVERY token (identifiers included).
- * Used to measure how "distinctive" a fragment is: a real duplicated helper
- * (a mapper, an error handler) is full of identifiers, property names and
- * literals, whereas boilerplate like `if (x) return true; else return false;`
- * is almost entirely keywords and punctuation. Template literals are split
- * into their content words (prefixed `t`) so the SQL/labels inside them
- * count as content; plain strings collapse to a single `STR` marker.
- *
- * @param {string} text raw source text
- * @returns {string[]} token list (identifiers, keywords, numbers, punctuation, t-words)
- */
-function rawTokens(text) {
+const genericRenameMap = (typeParams) =>
+	pipe(
+		typeParams || [],
+		map((tp, i) => {
+			const name = tp.name ? tp.name.text : "";
+			return name ? [name, `T${i}`] : null;
+		}),
+		filter(Boolean),
+		reduce((acc, [k, v]) => ({ ...acc, [k]: v }), {}),
+	);
+
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const normalizeTypeText = (text, rename) =>
+	pipe(
+		String(text || ""),
+		(s) => Object.entries(rename).reduce((out, [from, to]) => (from ? out.replace(new RegExp(`\\b${escapeRe(from)}\\b`, "g"), to) : out), s),
+		(s) => s.replace(/\s+/g, " ").replace(/\s*([<>,()|&?:])\s*/g, "$1").trim(),
+	);
+
+const functionName = (node, sourceFile) => {
+	if (node.name && node.name.text) return node.name.text;
+	const parent = node.parent;
+	if (parent) {
+		if (parent.kind === ts.SyntaxKind.VariableDeclaration && parent.name && parent.name.getText) {
+			return parent.name.getText(sourceFile);
+		}
+		if (parent.kind === ts.SyntaxKind.PropertyAssignment && parent.name && parent.name.getText) {
+			return parent.name.getText(sourceFile);
+		}
+	}
+	return "<anonymous>";
+};
+
+const computeSignature = (node, checker, sourceFile) => {
+	const name = functionName(node, sourceFile);
+
+	let typeParams = [];
+	if (node.typeParameters) typeParams = node.typeParameters;
+	else if (node.parent && node.parent.kind === ts.SyntaxKind.FunctionDeclaration && node.parent.typeParameters) {
+		typeParams = node.parent.typeParameters;
+	}
+	const rename = genericRenameMap(typeParams);
+
+	const params = pipe(
+		node.parameters || [],
+		map((p) => {
+			if (p.type) {
+				return normalizeTypeText(p.type.getText(sourceFile), rename);
+			}
+			if (checker) {
+				try {
+					const t = checker.getTypeAtLocation(p.name);
+					return normalizeTypeText(checker.typeToString(t, undefined, ts.TypeFormatFlags.NoTruncation), rename);
+				} catch {
+					return "?";
+				}
+			}
+			return "?";
+		}),
+	);
+
+	let returns = "?";
+	if (checker) {
+		try {
+			const sig = checker.getSignatureFromDeclaration(node);
+			if (sig) {
+				const rt = checker.getTypeOfSignatureReturnType(sig);
+				returns = normalizeTypeText(checker.typeToString(rt, undefined, ts.TypeFormatFlags.NoTruncation), rename);
+			}
+		} catch {
+		}
+	}
+	if (returns === "?" && node.type) {
+		returns = normalizeTypeText(node.type.getText(sourceFile), rename);
+	}
+
+	const signatureKey = `${params.join("|")}::${returns}`;
+	return { name, params, returns, signatureKey };
+};
+
+const bodyTokens = (bodyText) =>
+	pipe(
+		String(bodyText || ""),
+		(s) => s.replace(/`(?:[^`\\]|\\.)*`/g, " `TPL` ").replace(/"(?:[^"\\]|\\.)*"/g, " STR ").replace(/'(?:[^'\\]|\\.)*'/g, " STR ").replace(/\/\/[^\n]*/g, " ").replace(/\/\*[\s\S]*?\*\//g, " "),
+		(s) => s.split(/[^A-Za-z0-9_$]+/).filter(Boolean),
+		filter((t) => !/^[a-z_$]/.test(t) || isKeyword(t)),
+		sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)),
+	);
+
+const rawTokens = (text) => {
 	const out = [];
 	for (const m of String(text || "").matchAll(/`(?:[^`\\]|\\.)*`|"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\/\/[^\n]*|\/\*[\s\S]*?\*\/|[A-Za-z_$][A-Za-z0-9_$]*|0x[0-9a-fA-F]+|\d+(?:\.\d+)?|[^\sA-Za-z0-9_$]/g)) {
 		const t = m[0];
@@ -210,51 +126,25 @@ function rawTokens(text) {
 			for (const w of t.slice(1, -1).matchAll(/[A-Za-z_$][A-Za-z0-9_$]*|\d+(?:\.\d+)?/g)) out.push(`t${w[0]}`);
 		} else if (t.startsWith('"') || t.startsWith("'")) {
 			out.push("STR");
-		} else if (t.startsWith("//") || t.startsWith("/*")) {
-			// comments carry no content signal
-		} else {
+		} else if (!t.startsWith("//") && !t.startsWith("/*")) {
 			out.push(t);
 		}
 	}
 	return out;
-}
+};
 
-/**
- * Fraction of a fragment's tokens that are "distinctive": identifiers
- * (lowercase-starting, not a keyword), numbers, string markers, and the
- * words inside template literals (SQL, messages, labels — literal content).
- * High value = content-specific; low value = structural boilerplate.
- *
- * @param {string} text raw source text
- * @returns {number} 0..1
- */
-function distinctiveRatio(text) {
+const distinctiveRatio = (text) => {
 	const toks = rawTokens(text);
 	if (toks.length === 0) return 0;
-	let distinctive = 0;
-	for (const t of toks) {
-		if (/^[0-9]/.test(t)) {
-			distinctive += 1;
-		} else if (/^STR$/.test(t)) {
-			distinctive += 1;
-		} else if (/^t[A-Za-z0-9_$]/.test(t)) {
-			distinctive += 1;
-		} else if (/^[a-z_$]/.test(t) && !isKeyword(t)) {
-			distinctive += 1;
-		}
-	}
+	const distinctive = pipe(
+		toks,
+		filter((t) => /^[0-9]/.test(t) || /^STR$/.test(t) || /^t[A-Za-z0-9_$]/.test(t) || (/^[a-z_$]/.test(t) && !isKeyword(t))),
+		(x) => x.length,
+	);
 	return distinctive / toks.length;
-}
+};
 
-/**
- * Jaccard similarity over two sorted token arrays (multiset intersection /
- * union). Both arrays must already be sorted.
- *
- * @param {string[]} a sorted tokens
- * @param {string[]} b sorted tokens
- * @returns {number} 0..1
- */
-function jaccard(a, b) {
+const jaccard = (a, b) => {
 	if (!a.length && !b.length) return 1;
 	if (!a.length || !b.length) return 0;
 	let i = 0;
@@ -273,6 +163,6 @@ function jaccard(a, b) {
 	}
 	const union = a.length + b.length - inter;
 	return union === 0 ? 0 : inter / union;
-}
+};
 
 module.exports = { computeSignature, functionName, bodyTokens, jaccard, normalizeTypeText, distinctiveRatio };

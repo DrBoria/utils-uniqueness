@@ -2,21 +2,28 @@
 
 const path = require("node:path");
 
-function renderDuplicateReport({ clusters, repoRoot, roots }) {
+const { pipe, map, join, reduce } = require("remeda");
+
+const renderDuplicateReport = ({ clusters, repoRoot, roots }) => {
 	const lines = [];
 	lines.push("# Duplicate utility functions");
 	lines.push("");
-	lines.push(`Scanned ${roots.map((r) => `\`${r}\``).join(", ")}. Found ${clusters.length} duplicate cluster(s).`);
+	const rootsLabel = pipe(roots, map((r) => "`" + r + "`"), join(", "));
+	lines.push(`Scanned ${rootsLabel}. Found ${clusters.length} duplicate cluster(s).`);
 	lines.push("");
 
-	const byTier = { signature: [], body: [], jscpd: [], fragment: [] };
-	for (const c of clusters) {
-		(byTier[c.tier] || byTier.jscpd).push(c);
-	}
+	const byTier = pipe(
+		clusters,
+		reduce((acc, c) => {
+			(acc[c.tier] || acc.jscpd).push(c);
+			return acc;
+		}, { signature: [], body: [], jscpd: [], fragment: [] }),
+	);
 
+	const rootSlash = repoRoot ? repoRoot.split("\\").join("/") : "";
 	const rel = (p) => {
 		const n = p.split("\\").join("/");
-		return repoRoot && n.startsWith(repoRoot.split("\\").join("/")) ? n.slice(repoRoot.split("\\").join("/").length + 1) : n;
+		return rootSlash && n.startsWith(rootSlash) ? n.slice(rootSlash.length + 1) : n;
 	};
 
 	const sig = (r) => `(${(r.params || []).join(", ")}) → ${r.returns || "?"}`;
@@ -49,6 +56,6 @@ function renderDuplicateReport({ clusters, repoRoot, roots }) {
 	section("Partial duplicates (fragments)", byTier.fragment, "a substantial shared chunk inside two larger functions — extract into a common helper");
 
 	return lines.join("\n");
-}
+};
 
 module.exports = { renderDuplicateReport };

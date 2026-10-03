@@ -1,38 +1,12 @@
 "use strict";
 
-/**
- * scanner/load-config.js
- *
- * Load the rule options from the consumer's config when the scanner is run
- * without --roots. Walks up from the start directory looking for:
- *   1. md-code-utils-uniqueness.config.js (standalone, preferred)
- *   2. eslint.config.js / eslint.config.mjs (flat config — find the rule)
- *   3. .eslintrc.js / .eslintrc.cjs / .eslintrc.json (legacy)
- */
-
 const fs = require("node:fs");
 const path = require("node:path");
 
-const RULE_ID = "utils-uniqueness";
+const RULE_ID = "jsts-utils-uniqueness";
 
-/**
- * @param {string} startDir
- * @returns {Promise<{options: object, source: string}|null>}
- */
-async function loadRuleOptions(startDir) {
-	let dir = startDir;
-	for (;;) {
-		const found = tryLoadIn(dir);
-		if (found) return found;
-		const parent = path.dirname(dir);
-		if (parent === dir) break;
-		dir = parent;
-	}
-	return null;
-}
-
-function tryLoadIn(dir) {
-	const standalone = path.join(dir, "md-code-utils-uniqueness.config.js");
+const tryLoadIn = (dir) => {
+	const standalone = path.join(dir, "md-code-jsts-utils-uniqueness.config.js");
 	if (fs.existsSync(standalone)) {
 		const mod = require(standalone);
 		const opts = mod && mod.options !== undefined ? mod.options : mod;
@@ -57,7 +31,6 @@ function tryLoadIn(dir) {
 				}
 			}
 		} catch {
-			// unparseable config — keep walking up
 		}
 	}
 
@@ -75,11 +48,22 @@ function tryLoadIn(dir) {
 				}
 			}
 		} catch {
-			// keep walking up
 		}
 	}
 
 	return null;
-}
+};
+
+const loadRuleOptions = async (startDir) => {
+	let dir = startDir;
+	for (;;) {
+		const found = tryLoadIn(dir);
+		if (found) return found;
+		const parent = path.dirname(dir);
+		if (parent === dir) break;
+		dir = parent;
+	}
+	return null;
+};
 
 module.exports = { loadRuleOptions };

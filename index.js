@@ -1,19 +1,5 @@
 "use strict";
 
-/**
- * index.js
- *
- * The ESLint rule. On each file it:
- *   1. extracts the file's utility functions (extract.js),
- *   2. loads the catalog (reports/utils-catalog.json) built by the scanner,
- *   3. reports every function that belongs to a duplicate cluster,
- *      pointing at the canonical member ("use X from <path>"),
- *   4. drops findings covered by the debt ledger (debt.js).
- *
- * The rule is read-only with respect to the catalog: it never writes it.
- * Run the scanner (bin) to (re)build the catalog.
- */
-
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -21,16 +7,11 @@ const { normalizeOptions, isIgnored, resolveDataPath } = require("./config");
 const { resolveThresholds } = require("./thresholds");
 const { applyDebt, loadLedger, findRepoRoot } = require("./debt");
 const { extractFromFile } = require("./extract");
+const { flatMap, filter } = require("remeda");
 
 const RULE_ID = "utils-uniqueness";
 
-/**
- * Load the catalog JSON, or null when absent/unreadable.
- *
- * @param {string} catalogPath absolute path
- * @returns {object|null}
- */
-function loadCatalog(catalogPath) {
+const loadCatalog = (catalogPath) => {
 	try {
 		const raw = fs.readFileSync(catalogPath, "utf8");
 		const parsed = JSON.parse(raw);
@@ -39,38 +20,22 @@ function loadCatalog(catalogPath) {
 	} catch {
 		return null;
 	}
-}
+};
 
-/**
- * Resolve a catalog member (repo-relative path) to an absolute path using
- * the catalog's own recorded repoRoot.
- *
- * @param {object} catalog
- * @param {object} member catalog member {path, line}
- * @returns {string} absolute path
- */
-function memberAbsPath(catalog, member) {
+const memberAbsPath = (catalog, member) => {
 	const p = member.path || "";
 	if (path.isAbsolute(p)) return p;
 	const base = catalog.repoRoot ? path.resolve(catalog.repoRoot) : process.cwd();
 	return path.resolve(base, p);
-}
+};
 
-/**
- * Find the duplicate cluster (if any) that a record belongs to, and the
- * canonical member to point at.
- *
- * @param {object} catalog
- * @param {object} rec FunctionRecord from the current file
- * @returns {{cluster: object, canonical: object}|null}
- */
-function findClusterFor(catalog, rec) {
+const findClusterFor = (catalog, rec) => {
 	for (const cluster of catalog.clusters || []) {
 		const hit = (cluster.members || []).find((m) => memberAbsPath(catalog, m) === rec.path && m.line === rec.line);
 		if (hit) return { cluster, canonical: cluster.canonical };
 	}
 	return null;
-}
+};
 
 module.exports = {
 	meta: {
@@ -165,25 +130,30 @@ module.exports = {
 				}
 
 				const records = extractFromFile(filename, { requireExported: thresholds.requireExported });
-				for (const rec of records) {
-					if (rec.bodyTokenCount < thresholds.minBodyTokens) continue;
-					const found = findClusterFor(catalog, rec);
-					if (!found) continue;
-					const { cluster, canonical } = found;
-					const canonicalAbs = memberAbsPath(catalog, canonical);
-					if (canonicalAbs === rec.path && canonical.line === rec.line) continue;
-					const relCanonical = path.relative(root, canonicalAbs).split(path.sep).join("/");
-					context.report({
-						node,
-						messageId: "duplicateUtility",
-						data: {
-							name: rec.name,
-							canonical: canonical.name,
-							canonicalPath: `${relCanonical}:${canonical.line}`,
-							tier: cluster.tier,
-						},
-					});
-				}
+				const hits = flatMap(
+					filter(records, (rec) => rec.bodyTokenCount >= thresholds.minBodyTokens),
+					(rec) => {
+						const found = findClusterFor(catalog, rec);
+						if (!found) return [];
+						const { cluster, canonical } = found;
+						const canonicalAbs = memberAbsPath(catalog, canonical);
+						if (canonicalAbs === rec.path && canonical.line === rec.line) return [];
+						const relCanonical = path.relative(root, canonicalAbs).split(path.sep).join("/");
+						return [
+							{
+								node,
+								messageId: "duplicateUtility",
+								data: {
+									name: rec.name,
+									canonical: canonical.name,
+									canonicalPath: `${relCanonical}:${canonical.line}`,
+									tier: cluster.tier,
+								},
+							},
+						];
+					},
+				);
+				hits.forEach((h) => context.report(h));
 			},
 		};
 	},
