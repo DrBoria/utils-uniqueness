@@ -1,29 +1,32 @@
 {
-  "name": "@md-code/jsts-utils-uniqueness",
+  "name": "@md-code/utils-uniqueness",
   "version": "0.1.0",
   "description": "ESLint rule + CLI that finds duplicate utility functions: same TypeScript signature or same body logic, scattered across the codebase instead of living in one shared module.",
   "license": "MIT",
   "main": "index.js",
   "bin": {
-    "md-code-jsts-utils-uniqueness": "bin/utils-uniqueness.js"
+    "md-code-utils-uniqueness": "bin/utils-uniqueness.js"
   },
   "files": [
     "index.js",
     "plugin.js",
+    "main.js",
     "config.js",
     "thresholds.js",
     "signature.js",
-    "extract.js",
-    "matching.js",
+    "ast.js",
+    "jscpd.js",
+    "matcher",
+    "filter",
     "debt.js",
     "report.js",
-    "scanner",
+    "utils.js",
     "bin",
     "README.md"
   ],
   "exports": {
     ".": "./index.js",
-    "./plugin": "./plugin.js"
+    "./plugin": "./index.js"
   },
   "scripts": {
     "test": "node --test"

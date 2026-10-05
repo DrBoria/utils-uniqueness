@@ -3,10 +3,10 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
-const RULE_ID = "jsts-utils-uniqueness";
+const RULE_ID = "utils-uniqueness";
 
 const tryLoadIn = (dir) => {
-	const standalone = path.join(dir, "md-code-jsts-utils-uniqueness.config.js");
+	const standalone = path.join(dir, "md-code-utils-uniqueness.config.js");
 	if (fs.existsSync(standalone)) {
 		const mod = require(standalone);
 		const opts = mod && mod.options !== undefined ? mod.options : mod;
@@ -43,7 +43,7 @@ const tryLoadIn = (dir) => {
 			for (const key of Object.keys(rules)) {
 				if (key === RULE_ID || key.endsWith(`/${RULE_ID}`)) {
 					const val = rules[key];
-					const options = Array.isArray(val) ? val[0] : undefined;
+					const options = Array.isArray(val) ? val[1] : undefined;
 					return { options: options || {}, source: p };
 				}
 			}

@@ -3,10 +3,10 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
-const { normalizeOptions, isIgnored, resolveDataPath } = require("./config");
+const { normalizeOptions, isIgnored, resolveDataPath, findRepoRoot } = require("./config");
 const { resolveThresholds } = require("./thresholds");
-const { applyDebt, loadLedger, findRepoRoot } = require("./debt");
-const { extractFromFile } = require("./extract");
+const { applyDebt, loadLedger } = require("./debt");
+const { extractFromFile } = require("./ast");
 const { flatMap, filter } = require("remeda");
 
 const RULE_ID = "utils-uniqueness";
@@ -37,7 +37,7 @@ const findClusterFor = (catalog, rec) => {
 	return null;
 };
 
-module.exports = {
+const rule = {
 	meta: {
 		type: "problem",
 		docs: {
@@ -156,5 +156,17 @@ module.exports = {
 				hits.forEach((h) => context.report(h));
 			},
 		};
+	},
+};
+
+const pkg = require("./package.json");
+
+module.exports = {
+	meta: {
+		name: pkg.name,
+		version: pkg.version,
+	},
+	rules: {
+		"utils-uniqueness": rule,
 	},
 };

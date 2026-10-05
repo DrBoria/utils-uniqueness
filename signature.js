@@ -165,4 +165,4 @@ const jaccard = (a, b) => {
 	return union === 0 ? 0 : inter / union;
 };
 
-module.exports = { computeSignature, functionName, bodyTokens, jaccard, normalizeTypeText, distinctiveRatio };
+module.exports = { computeSignature, functionName, bodyTokens, jaccard, distinctiveRatio };

@@ -1,4 +1,4 @@
 #!/usr/bin/env node
 "use strict";
 
-require("../scanner/main.js");
+require("../main.js");

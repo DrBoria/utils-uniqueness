@@ -2,6 +2,7 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
+const { findRepoRoot } = require("./config");
 
 const loadLedger = (filePath) => {
 	try {
@@ -45,22 +46,4 @@ const repoRelative = (context) => {
 	return abs.split(path.sep).join("/");
 };
 
-const findRepoRoot = (startDir) => {
-	let dir = startDir;
-	for (;;) {
-		if (
-			fs.existsSync(path.join(dir, "pnpm-workspace.yaml")) ||
-			fs.existsSync(path.join(dir, "bun.lockb")) ||
-			fs.existsSync(path.join(dir, "bun.lock")) ||
-			fs.existsSync(path.join(dir, ".git"))
-		) {
-			return dir;
-		}
-		const parent = path.dirname(dir);
-		if (parent === dir) break;
-		dir = parent;
-	}
-	return null;
-};
-
-module.exports = { applyDebt, loadLedger, repoRelative, findRepoRoot };
+module.exports = { applyDebt, loadLedger, repoRelative };

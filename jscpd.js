@@ -110,4 +110,4 @@ const toPairRefs = (clones, root) => {
 	}));
 };
 
-module.exports = { runJscpd, toPairRefs, jscpdCommand };
+module.exports = { runJscpd, toPairRefs };

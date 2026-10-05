@@ -1,7 +1,6 @@
 "use strict";
 
 const fs = require("node:fs");
-const path = require("node:path");
 
 const { computeSignature, functionName, bodyTokens } = require("./signature");
 const { map } = require("remeda");
@@ -67,7 +66,7 @@ const isTopLevelUtility = (node, sourceFile) => {
 	return owner === sourceFile;
 };
 
-const collectFunctionNodes = (sourceFile, checker) => {
+const collectFunctionNodes = (sourceFile) => {
 	const out = [];
 	const visit = (node) => {
 		const isFn =
@@ -95,7 +94,7 @@ const extractFromFile = (filePath, opts = {}, shared = {}) => {
 
 	const requireExported = opts.requireExported === true;
 
-	return map(collectFunctionNodes(sourceFile, checker), (node) => {
+	return map(collectFunctionNodes(sourceFile), (node) => {
 		const name = functionName(node, sourceFile);
 		if (name === "<anonymous>") return null;
 		if (isComponent(node, sourceFile)) return null;
@@ -154,4 +153,4 @@ const extractFromFiles = (filePaths, opts = {}) => {
 	return out;
 };
 
-module.exports = { extractFromFile, extractFromFiles, isComponent, isExported, isTestCallback };
+module.exports = { extractFromFile, extractFromFiles, isExported };

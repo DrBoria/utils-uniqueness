@@ -2,8 +2,8 @@
 
 ESLint rule + CLI scanner that finds **duplicate utility functions** across a
 TypeScript codebase. It is the utilities counterpart of
-`@md-code/react-component-uniqueness` (RDU): RDU catches duplicated React
-components, this package catches duplicated plain functions.
+`@md-code/component-uniqueness` (CU): CU catches duplicated components,
+this package catches duplicated plain functions.
 
 Two pieces:
 
@@ -51,12 +51,12 @@ Options:
 
 ```js
 // eslint.config.js
-import jsts from "@md-code/utils-uniqueness/plugin";
+import utilsUniqueness from "@md-code/utils-uniqueness";
 
 export default [
   {
     files: ["**/*.ts", "**/*.tsx"],
-    plugins: { "md-code": jsts },
+    plugins: { "md-code": utilsUniqueness },
     rules: {
       "md-code/utils-uniqueness": [
         "warn",
@@ -93,21 +93,31 @@ file does not exist yet.
 | --- | --- | --- |
 | `minBodyTokens` | `8` | Minimum normalized body tokens to be considered a utility. |
 | `signatureExact` | `true` | Cluster by exact normalized signature. |
+| `signatureMinParams` | `1` | Minimum params for a signature-tier match to be meaningful. |
 | `bodyMinRatio` | `0.6` | Jaccard ratio on normalized body tokens for the body tier. |
-| `jscpdMinTokens` / `jscpdSimilarity` | `20` / `0.7` | jscpd tier. |
+| `bodyMinParams` | `1` | Minimum params for a body-tier match to be meaningful. |
+| `jscpd.enabled` | `false` | Run the jscpd pass at all. |
+| `jscpd.mode` / `minTokens` / `minLines` / `similarity` | `strict` / `35` / `4` / `0.7` | jscpd CLI settings. |
+| `jscpd.whole.minCoverage` | `0.5` | A clone must cover at least this share of both functions for the whole tier. |
+| `jscpd.whole.minDistinctiveRatio` | `0.35` | Minimum distinctive-token share for the whole tier. |
+| `jscpd.fragment.minTokens` / `minLines` / `minDistinctiveRatio` | `35` / `4` / `0.35` | Fragment tier: short but real shared chunks. |
 | `requireExported` | `false` | Only catalog exported functions. |
 
 ## How duplicates are found
 
-Three tiers, strongest first:
+Four tiers, strongest first:
 
 1. **signature** — identical normalized signature (name + params + return).
 2. **body** — Jaccard similarity of normalized body token streams
    (strings, comments and identifiers blanked; keywords and uppercase tokens
    kept) above `bodyMinRatio`.
-3. **jscpd** — raw token-level clones reported by the jscpd CLI, which is
-   unfiltered: it catches clones the two AST tiers miss (renamed parameters,
-   reordered statements, partially shared bodies).
+3. **jscpd** — token-level clones reported by the jscpd CLI that cover a
+   large share of both functions (`whole.minCoverage`); unlike the AST tiers
+   it also catches clones with renamed parameters and reordered statements.
+4. **fragment** — a jscpd clone that is shorter than the whole-function bar
+   but still long enough (`fragment.minTokens` / `fragment.minLines`) and
+   distinctive enough (`fragment.minDistinctiveRatio`) to be a real shared
+   chunk rather than boilerplate.
 
 React components and test/story callbacks are excluded from extraction.
 

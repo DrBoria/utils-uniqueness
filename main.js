@@ -6,16 +6,14 @@ const path = require("node:path");
 
 const { pipe, map, filter, concat } = require("remeda");
 
-const { findRepoRoot } = require("../debt");
-const { isIgnored, DEFAULT_EXCLUDE } = require("../config");
-const { resolveThresholds } = require("../thresholds");
-const { loadRuleOptions } = require("./load-config");
-const { walk } = require("./walk");
-const { extractFromFiles } = require("../extract");
-const { match } = require("../matching");
+const { findRepoRoot, isIgnored, DEFAULT_EXCLUDE, loadRuleOptions } = require("./config");
+const { resolveThresholds } = require("./thresholds");
+const { extractFromFiles } = require("./ast");
+const { match } = require("./matcher/cluster");
+const { minBodyTokensFilter } = require("./filter/min-body-tokens");
 const { runJscpd, toPairRefs } = require("./jscpd");
-const { dedupeAndSort, slimRecord, writeCatalog } = require("./output");
-const { renderDuplicateReport } = require("../report");
+const { walk, dedupeAndSort, slimRecord, writeCatalog } = require("./utils");
+const { renderDuplicateReport } = require("./report");
 
 const fail = (message) => {
 	console.error(`[utils-uniqueness] ${message}`);
@@ -51,9 +49,9 @@ const parseArgs = (argv) => {
 		} else if (a === "--verbose") {
 			cfg.verbose = true;
 		} else if (a === "--help" || a === "-h") {
-			console.log("Usage: md-code-utils-uniqueness [--report file.md] [--jscpd] [--no-jscpd] [--verbose]");
-			console.log("Scans for duplicate utility functions → reports/utils-duplicates.md.");
-			console.log("Scan roots come from the consumer's eslint.config.js (rule md-code/utils-uniqueness) or md-code-utils-uniqueness.config.js.");
+			console.log("Usage: md-code-utils-uniqueness [--roots dir1:dir2] [--out catalog.json] [--report [file]] [--check] [--jscpd] [--no-jscpd] [--verbose]");
+			console.log("Scans for duplicate utility functions → catalog + reports/utils-duplicates.md.");
+			console.log("Scan roots come from --roots or the rule options (utilsFolder) in eslint.config.js / md-code-utils-uniqueness.config.js.");
 			process.exit(0);
 		} else {
 			fail(`unknown argument: ${a} (see --help)`);
@@ -64,23 +62,28 @@ const parseArgs = (argv) => {
 
 const resolveAgainst = (value, repoRoot) => (path.isAbsolute(value) ? value : path.resolve(repoRoot, value));
 
+const normalize = (s) => String(s).replace(/\\/g, "/").replace(/\/+$/, "");
+
 const main = async () => {
 	const args = parseArgs(process.argv.slice(2));
 	const cwd = process.cwd();
 
-	const loaded = args.roots ? null : await loadRuleOptions(cwd);
+	const loaded = args.roots ? null : loadRuleOptions(cwd);
 	const configOptions = loaded ? loaded.options : {};
 	if (loaded) {
 		console.log(`[utils-uniqueness] config from ${loaded.source}`);
 	}
 
-	const repoRoot = args.repoRoot ? path.resolve(cwd, args.repoRoot) : findRepoRoot(cwd) || cwd;
+	const opts = { ...configOptions, root: args.repoRoot ? path.resolve(cwd, args.repoRoot) : undefined };
+	const repoRoot = args.repoRoot ? path.resolve(cwd, args.repoRoot) : findRepoRoot(cwd, opts.rootMarkers) || cwd;
 	const thresholds = resolveThresholds(configOptions);
+	const exts = Array.isArray(configOptions.exts) && configOptions.exts.length > 0 ? configOptions.exts : [".ts", ".tsx", ".js", ".jsx"];
+	const ignoreDirs = Array.isArray(configOptions.ignoreDirs) && configOptions.ignoreDirs.length > 0 ? configOptions.ignoreDirs : ["node_modules", "dist", "build"];
 
 	const configRoots = pipe(
 		configOptions.utilsFolder || [],
 		map((d) => (d && typeof d === "object" ? d.path : d)),
-		map((d) => String(d).replace(/\\/g, "/").replace(/\/+$/, "")),
+		map(normalize),
 	);
 	const roots = args.roots || configRoots;
 	if (!roots || roots.length === 0) {
@@ -89,7 +92,7 @@ const main = async () => {
 
 	const outPath = resolveAgainst(args.out || configOptions.catalogPath || "reports/utils-catalog.json", repoRoot);
 	const include = configOptions.include || [];
-	const exclude = configOptions.exclude || DEFAULT_EXCLUDE;
+	const exclude = configOptions.exclude && configOptions.exclude.length > 0 ? configOptions.exclude : DEFAULT_EXCLUDE;
 	const shouldSkip = (abs) => isIgnored(path.relative(repoRoot, abs).split(path.sep).join("/"), include, exclude);
 
 	const files = [];
@@ -98,7 +101,7 @@ const main = async () => {
 		if (!fs.existsSync(rootDir)) {
 			fail(`scan root does not exist: ${relRoot}`);
 		}
-		for (const file of walk(rootDir)) {
+		for (const file of walk(rootDir, exts, ignoreDirs)) {
 			if (shouldSkip(file)) continue;
 			files.push(file);
 		}
@@ -106,7 +109,7 @@ const main = async () => {
 	if (args.verbose) {
 		console.log(`[utils-uniqueness] ${files.length} file(s) to extract`);
 	}
-	const records = extractFromFiles(files, { requireExported: thresholds.requireExported });
+	const records = minBodyTokensFilter(extractFromFiles(files, { requireExported: thresholds.requireExported }), thresholds);
 	if (args.verbose) {
 		console.log(`[utils-uniqueness] ${records.length} utility function(s) extracted`);
 	}
@@ -145,8 +148,7 @@ const main = async () => {
 
 	const catalog = {
 		version: 1,
-		generatedAt: new Date().toISOString(),
-		roots: pipe(roots, map((d) => String(d).replace(/\\/g, "/").replace(/\/+$/, ""))),
+		roots: pipe(roots, map(normalize)),
 		repoRoot: repoRoot.split(path.sep).join("/"),
 		functions: pipe(dedupeAndSort(records), map((r) => slimRecord(r, repoRoot))),
 		clusters: pipe(
@@ -171,7 +173,7 @@ const main = async () => {
 			JSON.stringify(current.functions || []) === JSON.stringify(catalog.functions) &&
 			JSON.stringify(current.clusters || []) === JSON.stringify(catalog.clusters);
 		if (!same) {
-			fail(`catalog is out of date (${catalog.functions.length} function(s), ${catalog.clusters.length} cluster(s) at ${path.relative(repoRoot, outPath)}); regenerate it (node scanner/main.js)`);
+			fail(`catalog is out of date (${catalog.functions.length} function(s), ${catalog.clusters.length} cluster(s) at ${path.relative(repoRoot, outPath)}); regenerate it (node main.js)`);
 		}
 		console.log(`[utils-uniqueness] catalog up to date (${catalog.functions.length} function(s), ${catalog.clusters.length} cluster(s))`);
 		return;
@@ -180,11 +182,13 @@ const main = async () => {
 	writeCatalog(outPath, catalog);
 	console.log(`[utils-uniqueness] wrote ${path.relative(repoRoot, outPath)} (${catalog.functions.length} function(s), ${catalog.clusters.length} cluster(s), ${files.length} file(s) scanned)`);
 
-	const dupReportPath = args.report === true || !args.report ? "reports/utils-duplicates.md" : args.report;
-	const reportPath = path.isAbsolute(dupReportPath) ? dupReportPath : path.resolve(cwd, dupReportPath);
-	fs.mkdirSync(path.dirname(reportPath), { recursive: true });
-	fs.writeFileSync(reportPath, renderDuplicateReport({ clusters, repoRoot, roots: catalog.roots }), "utf8");
-	console.log(`[utils-uniqueness] wrote report ${reportPath} (${clusters.length} cluster(s))`);
+	if (args.report) {
+		const dupReportPath = args.report === true ? "reports/utils-duplicates.md" : args.report;
+		const reportPath = path.isAbsolute(dupReportPath) ? dupReportPath : path.resolve(cwd, dupReportPath);
+		fs.mkdirSync(path.dirname(reportPath), { recursive: true });
+		fs.writeFileSync(reportPath, renderDuplicateReport({ clusters, repoRoot, roots: catalog.roots }), "utf8");
+		console.log(`[utils-uniqueness] wrote report ${reportPath} (${clusters.length} cluster(s))`);
+	}
 };
 
 main().catch((e) => fail(e.stack || e.message));
