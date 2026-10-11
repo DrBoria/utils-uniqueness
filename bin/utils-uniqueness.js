@@ -1,4 +1,4 @@
 #!/usr/bin/env node
 "use strict";
 
-require("../main.js");
+require("../main.js").run();

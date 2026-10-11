@@ -1,8 +1,20 @@
 {
   "name": "@md-code/utils-uniqueness",
-  "version": "0.1.0",
-  "description": "ESLint rule + CLI that finds duplicate utility functions: same TypeScript signature or same body logic, scattered across the codebase instead of living in one shared module.",
+  "version": "0.1.1",
+  "description": "ESLint rule and CLI that find duplicate utility functions by comparing signature, structure, AST and control flow against a canonical utils folder.",
   "license": "MIT",
+  "keywords": [
+    "eslint",
+    "eslintplugin",
+    "eslint-plugin",
+    "duplicate-functions",
+    "code-duplication",
+    "design-system",
+    "typescript"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
   "main": "index.js",
   "bin": {
     "md-code-utils-uniqueness": "bin/utils-uniqueness.js"
@@ -10,45 +22,42 @@
   "files": [
     "index.js",
     "plugin.js",
-    "main.js",
     "config.js",
-    "thresholds.js",
-    "signature.js",
-    "ast.js",
-    "jscpd.js",
-    "matcher",
-    "filter",
-    "debt.js",
-    "report.js",
+    "main.js",
+    "logger.js",
     "utils.js",
-    "bin",
+    "decision-maker.js",
+    "report.js",
+    "normalize/",
+    "matcher/",
+    "filter/",
+    "playgrounds/",
+    "bin/",
     "README.md"
   ],
   "exports": {
     ".": "./index.js",
-    "./plugin": "./index.js"
-  },
-  "scripts": {
-    "test": "node --test"
+    "./plugin": "./index.js",
+    "./config": "./config.js",
+    "./report": "./report.js",
+    "./package.json": "./package.json"
   },
   "dependencies": {
-    "jscpd": "^5.4.0",
     "minimatch": "^9.0.4",
     "remeda": "^2.50.0",
-    "typescript": "^5.5.0"
+    "ts-morph": "^24.0.0"
+  },
+  "scripts": {
+    "gen:catalog": "node main.js",
+    "test": "vitest run"
   },
   "peerDependencies": {
     "eslint": ">=8.40.0"
   },
+  "devDependencies": {
+    "vitest": "^4.1.0"
+  },
   "publishConfig": {
     "access": "public"
   },
-  "keywords": [
-    "eslint",
-    "eslint-rule",
-    "duplicate-functions",
-    "code-duplication",
-    "refactoring",
-    "typescript"
-  ]
 }
