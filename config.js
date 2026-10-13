@@ -13,17 +13,45 @@ const DEFAULT_ROOT_MARKERS = [".git"];
 // every report. Excluded by default, always: the defaults are prepended to
 // any consumer-provided exclude list, so they cannot be turned off without a
 // code change.
-const DEFAULT_TEST_EXCLUDES = ["**/*.test.*", "**/*.spec.*", "**/*.e2e.*"];
+//
+// Storybook files (*.stories.tsx) are demo/prototype code: full of play()
+// functions, inline render callbacks and one-liner filters that match
+// canonical utils at 0.70–0.72 — hundreds of noise rows in every report.
+// Same treatment as tests.
+//
+// Files inside an `e2e/` directory are end-to-end test code regardless of
+// their filename (e.g. `core/e2e/coverage.ts` is not named *.e2e.*). Excluded
+// like other test code.
+const DEFAULT_TEST_EXCLUDES = ["**/*.test.*", "**/*.spec.*", "**/*.e2e.*", "**/*.stories.*", "**/e2e/**"];
 
+// A package.json without a marker (the tool's own dir) is NOT the repo root —
+// keep walking up until a marker dir is found, no matter how many nested
+// package.json dirs sit between startDir and the repo root.
 const findRepoRoot = (startDir, markers = DEFAULT_ROOT_MARKERS) => {
 	const markerSet = new Set(markers);
 	let dir = path.resolve(startDir);
 	for (;;) {
-		if (fs.existsSync(path.join(dir, "package.json")) && fs.readdirSync(dir).some((name) => markerSet.has(name))) return dir;
+		if (fs.existsSync(dir) && fs.readdirSync(dir).some((name) => markerSet.has(name))) return dir;
 		const parent = path.dirname(dir);
 		if (parent === dir) return null;
 		dir = parent;
 	}
+};
+
+// The tool can live in its OWN git repo (a nested .git), so walking up from the
+// cwd finds the tool's root, not the consumer project's. When a config file is
+// loaded, that file sits in the consumer's tree — anchor on its directory first,
+// then fall back to the cwd. An explicit --repo-root always wins.
+const pickRepoRoot = ({ cwd, configSource = null, explicitRepoRoot = null, rootMarkers = DEFAULT_ROOT_MARKERS } = {}) => {
+	if (explicitRepoRoot) return path.resolve(cwd, explicitRepoRoot);
+	const anchors = [];
+	if (configSource) anchors.push(path.dirname(path.resolve(configSource)));
+	anchors.push(cwd);
+	for (const anchor of anchors) {
+		const found = findRepoRoot(anchor, rootMarkers);
+		if (found) return found;
+	}
+	return cwd;
 };
 
 const normalizeFolders = (folders) => {
@@ -56,7 +84,6 @@ const normalizeOptions = (opts) => {
 		exts: o.exts || DEFAULT_EXTS,
 		ignoreDirs: o.ignoreDirs ? [...new Set([...DEFAULT_IGNORE_DIRS, ...o.ignoreDirs])] : DEFAULT_IGNORE_DIRS,
 		rootMarkers,
-		requireExported: o.requireExported === true,
 		proposeUtils: o.proposeUtils === true,
 	};
 };
@@ -250,6 +277,7 @@ module.exports = {
 	DEFAULT_IGNORE_DIRS,
 	DEFAULT_ROOT_MARKERS,
 	findRepoRoot,
+	pickRepoRoot,
 	normalizeFolders,
 	normalizeOptions,
 	inUtilsFolder,

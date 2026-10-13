@@ -15,7 +15,7 @@ const parseBody = async (fnName: string, source: string) => {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tree-test-"));
 	const file = path.join(dir, "sample.ts");
 	fs.writeFileSync(file, source, "utf8");
-	const parsed = parseFunctions(file, { requireExported: false });
+	const parsed = parseFunctions(file);
 	const d = parsed.find((p) => p.name === fnName);
 	if (!d) throw new Error(`function ${fnName} not found`);
 	return d.bodyTree;
@@ -240,7 +240,7 @@ describe("toPlainTree — .tsx files parse as JSX, not garbage", () => {
 );`,
 			"utf8",
 		);
-		const parsed = parseFunctions(file, { requireExported: false });
+		const parsed = parseFunctions(file);
 		const d = parsed.find((p) => p.name === "sectionBody");
 		if (!d) throw new Error("sectionBody not found");
 		const tree = d.bodyTree;
@@ -274,7 +274,7 @@ export const panelB = ({ title }: { title: string }) => (
 );`,
 			"utf8",
 		);
-		const parsed = parseFunctions(file, { requireExported: false });
+		const parsed = parseFunctions(file);
 		const a = parsed.find((p) => p.name === "panelA");
 		const b = parsed.find((p) => p.name === "panelB");
 		if (!a || !b) throw new Error("panelA/panelB not found");

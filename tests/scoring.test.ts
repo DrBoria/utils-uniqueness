@@ -178,3 +178,70 @@ describe("similar-tier floor — the weak tail is not reported", () => {
 		expect(decision.tier).toBe("similar");
 	});
 });
+
+describe("partial (part) candidates — signature weight must not be zeroed", () => {
+	// A part is a Block node with no parameters, so its signature score is
+	// naturally ~0. Zeroing the signature weight (totalW 1.0 → 0.7) renormalizes
+	// the remaining three signals upward by ~43%, letting structure-only
+	// matches (ast 0.2–0.5) cross the 0.6 similar threshold. The fix keeps
+	// the signature weight at 0.3 so the ~0 score penalizes confidence.
+
+	const partialMk = (over: Record<string, unknown> = {}) =>
+		mk({ partial: true, nodeCount: 10, tree: { kind: "block", children: [] }, ...over });
+
+	it("a structure-only match (low ast) does NOT reach the similar tier", () => {
+		// Mirrors the real false positive: `clampPage` block (structure 0.87,
+		// ast 0.31, cf 0.89, sig 0.00). Old: 0.501/0.7 = 0.72 → "similar".
+		// New: 0.501/1.0 = 0.50 → below 0.6 floor.
+		const app = partialMk();
+		const canon = mk({ nodeCount: 10, tree: { kind: "block", children: [] } });
+		const signals = {
+			signature: { score: 0.0, evidence: {} },
+			structure: { score: 0.87, evidence: {} },
+			ast: { score: 0.31, evidence: {} },
+			controlFlow: { score: 0.89, evidence: {} },
+		};
+		const decision = decide(app, canon, { signals });
+		expect(decision.confidence).toBeLessThan(0.6);
+		expect(decision.tier).not.toBe("similar");
+	});
+
+	it("a byte-for-byte body copy (high ast) still reaches the similar tier", () => {
+		// Mirrors the legitimate case: a block that is the exact formatMoney
+		// body (structure ~1.0, ast ~1.0, cf ~1.0, sig 0.00).
+		// New: 0.7/1.0 = 0.70 → above 0.6 floor.
+		const app = partialMk();
+		const canon = mk({ nodeCount: 10, tree: { kind: "block", children: [] } });
+		const signals = {
+			signature: { score: 0.0, evidence: {} },
+			structure: { score: 1.0, evidence: {} },
+			ast: { score: 1.0, evidence: {} },
+			controlFlow: { score: 1.0, evidence: {} },
+		};
+		const decision = decide(app, canon, { signals });
+		// The block must not be dropped: confidence stays above the similar
+		// floor (0.6). The tier may be "similar" or "duplicate" — both are
+		// reported, so we only assert the confidence floor.
+		expect(decision.confidence).toBeGreaterThanOrEqual(0.6);
+		expect(decision.tier).toBeTruthy();
+	});
+
+	it("a no-param canon match with a low AST is NOT reported (no-param signature coincidence)", () => {
+		// Mirrors the real false positive: `serialId` (no params) vs a 5-statement
+		// Block (no params) → signature 0.95, structure 0.70, ast 0.23,
+		// controlFlow 0.80 → confidence 0.70. The body is NOT a copy of
+		// serialId's body — the signature match is a no-param coincidence.
+		// A part is only reported when the body actually looks like the canon's
+		// body (high AST).
+		const app = partialMk();
+		const canon = mk({ nodeCount: 10, tree: { kind: "block", children: [] } });
+		const signals = {
+			signature: { score: 0.95, evidence: {} },
+			structure: { score: 0.7, evidence: {} },
+			ast: { score: 0.23, evidence: {} },
+			controlFlow: { score: 0.8, evidence: {} },
+		};
+		const decision = decide(app, canon, { signals });
+		expect(decision.tier).toBeFalsy();
+	});
+});

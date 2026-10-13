@@ -195,6 +195,9 @@ describe("clusterAppPairs — copy policy (AST + params)", () => {
 });
 
 describe("buildUtilsReport — app↔app mode (integration)", () => {
+	// The integration test parses the fixture corpus through the full O(n²)
+	// pipeline; under CPU load it can exceed the 5s default. An explicit timeout
+	// is used because the local bunfig.toml timeout is not applied by the runner.
 	it("with the flag, surfaces the cross-file twin as a worth-moving cluster", async () => {
 		const comp = await run(true);
 
@@ -205,7 +208,7 @@ describe("buildUtilsReport — app↔app mode (integration)", () => {
 			c.members.some((m: any) => m.name === "summarizeReviews"),
 		);
 		expect(cluster).toBeTruthy();
-	});
+	}, 15000);
 
 	it("with the flag, does NOT pull the unrelated one-liners into a cluster", async () => {
 		const comp = await run(true);
@@ -215,7 +218,7 @@ describe("buildUtilsReport — app↔app mode (integration)", () => {
 
 		expect(clustered.has("countAllergies")).toBe(false);
 		expect(clustered.has("sortReviews")).toBe(false);
-	});
+	}, 15000);
 
 	it("without the flag, reports no app↔app clusters", async () => {
 		const comp = await run(false);

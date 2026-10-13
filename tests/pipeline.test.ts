@@ -95,8 +95,9 @@ describe("isIgnored", () => {
 		expect(isIgnored("tests/utils/format.test.ts", [], config.exclude)).toBe(true);
 		expect(isIgnored("tests/utils/format.spec.ts", [], config.exclude)).toBe(true);
 		expect(isIgnored("tests/utils/format.e2e.ts", [], config.exclude)).toBe(true);
-		// Story files and plain prod files are still scanned.
-		expect(isIgnored("tests/utils/format.stories.tsx", [], config.exclude)).toBe(false);
+		// Story files are demo/prototype code — excluded like tests.
+		expect(isIgnored("tests/utils/format.stories.tsx", [], config.exclude)).toBe(true);
+		// Plain prod files are still scanned.
 		expect(isIgnored("tests/utils/format.ts", [], config.exclude)).toBe(false);
 	});
 });
@@ -123,7 +124,7 @@ describe("bodyless signatures (overloads / ambient) — null bodyTree", () => {
 
 	it("buildCandidate produces a usable candidate for a bodyless descriptor", () => {
 		const config = buildConfig();
-		const parsed = parseFunctions(OVERLOADS_FILE, { requireExported: false });
+		const parsed = parseFunctions(OVERLOADS_FILE);
 		const bodyless = parsed.find((d: any) => d.name === "graphql" && d.bodyTree == null);
 		expect(bodyless).toBeTruthy();
 

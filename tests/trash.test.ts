@@ -102,6 +102,20 @@ describe("trashScore — pure scoring of the Trash category", () => {
 		expect(trashScore(c)).toBeGreaterThanOrEqual(70);
 	});
 
+	it("does NOT treat an ANONYMOUS trash body as trash (the concept does not fit inline callbacks)", () => {
+		// A one-liner like `rows.filter((r) => r.type !== "none")` scores a
+		// valueless body, but the function is anonymous — it lives inline in a
+		// .map()/.filter() call and there is nothing to inline. The matcher
+		// (trashScore) is correct; the filter (isTrash) must cut it out.
+		// Named functions keep the trash verdict.
+		const { isTrash } = require("../decision-maker.js");
+		const anon = cand("filter#anon@42", eq(member("type"), str("none")), [{ name: "r" }]);
+		const named = cand("isNone", eq(member("type"), str("none")), [{ name: "r" }]);
+
+		expect(isTrash(anon)).toBe(false);
+		expect(isTrash(named)).toBe(true);
+	});
+
 	it("does NOT score a multi-field predicate (kind !== X && category !== null) as trash", () => {
 		const { trashScore, TRASH_THRESHOLD } = require("../decision-maker.js");
 		const kind = (v: string) => ({ kind: "member", label: v, children: [{ kind: "ident", label: "row", children: [] }] });
@@ -278,7 +292,7 @@ describe("buildUtilsReport — Trash category (integration)", () => {
 		expect(inTrash.has("isCorrected")).toBe(true);
 		expect(inTrash.has("isAmended")).toBe(true);
 		expect(inTrash.has("vitalType")).toBe(false);
-	});
+	}, 15000);
 
 	it("keeps the real cross-file twin in appClusters", async () => {
 		const comp = await run();
@@ -288,5 +302,23 @@ describe("buildUtilsReport — Trash category (integration)", () => {
 		);
 
 		expect(cluster).toBeTruthy();
-	});
+	}, 15000);
+
+	it("does NOT route an ANONYMOUS valueless callback to Trash, but the matcher still clusters it as a copy", async () => {
+		// anonCallbacks.ts holds two functions whose anonymous `.some()` callback
+		// body is the valueless one-liner `item.count === 1` (trash score 85).
+		// The matcher sees the two callbacks as mutual copies (worth moving), but
+		// the trash verdict does not apply to an anonymous callback — there is
+		// nothing to inline. So: NOT in trashClusters, still in appClusters.
+		const comp = await run();
+
+		const trashNames = new Set((comp.trashClusters || []).flatMap((c: any) => c.members.map((m: any) => m.name)));
+		for (const n of trashNames) expect(n).not.toContain("#anon@");
+
+		const anonCopy = (comp.appClusters || []).find((c: any) => {
+			const anons = c.members.filter((m: any) => m.name.includes("#anon@") && m.path.includes("anonCallbacks"));
+			return anons.length >= 2;
+		});
+		expect(anonCopy).toBeTruthy();
+	}, 15000);
 });

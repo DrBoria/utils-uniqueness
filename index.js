@@ -45,7 +45,7 @@ const createRule = () => {
 						exts: { type: "array" },
 						ignoreDirs: { type: "array" },
 						rootMarkers: { type: "array" },
-						requireExported: { type: "boolean" },
+
 					},
 					additionalProperties: false,
 				},
@@ -67,13 +67,12 @@ const createRule = () => {
 			const checkDuplicates = () => {
 				let parsed;
 				try {
-					parsed = parseFunctions(filename, { requireExported: config.requireExported });
+					parsed = parseFunctions(filename);
 				} catch {
 					return;
 				}
 
 				for (const d of parsed) {
-					if (!d.flags || !d.flags.isExported) continue;
 					const candidate = buildCandidate({ ...d, path: relPath }, config);
 					const pairs = [];
 					for (const canon of catalogUtils) {

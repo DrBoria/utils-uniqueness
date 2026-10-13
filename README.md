@@ -77,7 +77,6 @@ A function that already calls the canonical util is a usage, not a duplicate, an
 | `exts` | `.ts` `.tsx` `.js` `.jsx` | File extensions |
 | `weights` | signature 0.3, structure 0.3, ast 0.2, controlFlow 0.2 | Signal weights |
 | `thresholds` | duplicate 0.7, similar 0.5 | Confidence cut-offs |
-| `requireExported` | `false` | Only consider exported functions as candidates |
 
 ## CLI
 

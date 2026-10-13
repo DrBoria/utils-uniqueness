@@ -3,7 +3,9 @@
 const { Project, ts } = require("ts-morph");
 
 // ---------------------------------------------------------------------------
-// Function discovery (top-level utilities only — mirrors the old ast.js rules)
+// Function discovery — EVERY function: top-level, nested, callbacks, and
+// anonymous arrows. There is no exported-only contract: all functions are
+// comparable utilities.
 // ---------------------------------------------------------------------------
 
 // One shared Project across the whole scan. ts-morph caches parsed files, so
@@ -26,74 +28,6 @@ const isComponent = (node, sourceFile) => {
 	return /<([A-Z][A-Za-z0-9]*)[\s/>]|<\/[A-Z]/.test(text);
 };
 
-const hasExportModifier = (statement) => {
-	const mods = statement && statement.getModifiers();
-	if (!mods) return false;
-	return mods.some((m) => m.isKind(ts.SyntaxKind.ExportKeyword));
-};
-
-// A function is exported when its owning top-level statement carries the
-// `export` modifier (e.g. `export const f = ...`, `export function f() {}`)
-// OR it is reached through an ExportDeclaration/ExportAssignment
-// (e.g. `export { f }`, `export default f`). For `export const`/`export function`
-// TypeScript attaches `export` as a modifier on the statement — there is NO
-// ExportDeclaration wrapper node — so checking only for wrapper nodes returns
-// false for every exported function.
-const isExported = (node) => {
-	let statement = null;
-	if (node.isKind(ts.SyntaxKind.FunctionDeclaration)) {
-		statement = node;
-	} else if (node.isKind(ts.SyntaxKind.ArrowFunction) || node.isKind(ts.SyntaxKind.FunctionExpression)) {
-		let p = node.getParent();
-		while (p) {
-			if (p.isKind(ts.SyntaxKind.VariableStatement) || p.isKind(ts.SyntaxKind.FunctionDeclaration)) {
-				statement = p;
-				break;
-			}
-			if (p.isKind(ts.SyntaxKind.ExportDeclaration) || p.isKind(ts.SyntaxKind.ExportAssignment)) return true;
-			if (p.isKind(ts.SyntaxKind.ModuleDeclaration)) return false;
-			p = p.getParent();
-		}
-	} else {
-		// Not a top-level function owner; fall back to the wrapper-node scan.
-		let p = node;
-		while (p) {
-			if (p.isKind(ts.SyntaxKind.ExportDeclaration) || p.isKind(ts.SyntaxKind.ExportAssignment)) return true;
-			if (p.isKind(ts.SyntaxKind.ModuleDeclaration)) return false;
-			p = p.getParent();
-		}
-		return false;
-	}
-	if (statement) {
-		if (hasExportModifier(statement)) return true;
-		// `export { f }` / `export default f` re-export the name separately.
-		const owner = statement.getParent();
-		if (owner && owner.isKind(ts.SyntaxKind.ExportDeclaration)) return true;
-	}
-	return false;
-};
-
-const isTopLevelUtility = (node, sourceFile) => {
-	let statement;
-	if (node.isKind(ts.SyntaxKind.FunctionDeclaration)) {
-		statement = node;
-	} else if (
-		(node.isKind(ts.SyntaxKind.ArrowFunction) || node.isKind(ts.SyntaxKind.FunctionExpression)) &&
-		node.getParent() &&
-		node.getParent().isKind(ts.SyntaxKind.VariableDeclaration)
-	) {
-		const list = node.getParent().getParent();
-		if (!list || !list.isKind(ts.SyntaxKind.VariableDeclarationList)) return false;
-		statement = list.getParent();
-	} else {
-		return false;
-	}
-	if (!statement) return false;
-	let owner = statement.getParent();
-	if (owner && owner.isKind(ts.SyntaxKind.ExportDeclaration)) owner = owner.getParent();
-	return owner === sourceFile;
-};
-
 const collectFunctionNodes = (sourceFile) => {
 	const out = [];
 	const visit = (node) => {
@@ -102,7 +36,9 @@ const collectFunctionNodes = (sourceFile) => {
 			node.isKind(ts.SyntaxKind.ArrowFunction) ||
 			node.isKind(ts.SyntaxKind.FunctionExpression);
 		if (isFn) {
-			if (isTopLevelUtility(node, sourceFile)) out.push(node);
+			out.push(node);
+			// Keep recursing: functions may nest inside other functions.
+			node.forEachChild(visit);
 			return;
 		}
 		node.forEachChild(visit);
@@ -124,7 +60,26 @@ const functionName = (node, sourceFile) => {
 			if (name) return name;
 		}
 	}
-	return "<anonymous>";
+	// Unnamed function (e.g. an arrow passed to .map()): give it a synthetic
+	// owner-scoped name so it is still collected and compared by everything
+	// else (structure, not name).
+	let owner = "<top>";
+	let p = node.getParent();
+	while (p) {
+		if (p.isKind(ts.SyntaxKind.FunctionDeclaration) && p.getName()) {
+			owner = p.getName();
+			break;
+		}
+		if (p.isKind(ts.SyntaxKind.ArrowFunction) || p.isKind(ts.SyntaxKind.FunctionExpression)) {
+			const n = functionName(p, sourceFile);
+			if (n !== "<anonymous>") {
+				owner = n;
+				break;
+			}
+		}
+		p = p.getParent();
+	}
+	return `${owner}#anon@${node.getStartLineNumber()}`;
 };
 
 // ---------------------------------------------------------------------------
@@ -378,23 +333,21 @@ const buildDescriptor = (node, sourceFile, fileAbs) => {
 		flags: {
 			async: !!isAsync,
 			generator: !!isGenerator,
-			isExported: isExported(node),
 		},
 		bodyTree,
 		rawText: node.getBody() ? node.getBody().getText() : "",
 	};
 };
 
-const parseFunctions = (fileAbs, opts = {}) => {
+// Collects EVERY function in the file — exported, non-exported, nested,
+// anonymous callbacks. Unnamed functions get synthetic names (see
+// functionName) and are compared by structure, not by name.
+const parseFunctions = (fileAbs) => {
 	const sourceFile = sourceFileFor(fileAbs);
-	const requireExported = opts.requireExported === true;
 
 	const out = [];
 	for (const node of collectFunctionNodes(sourceFile)) {
-		const name = functionName(node, sourceFile);
-		if (name === "<anonymous>") continue;
 		if (isComponent(node, sourceFile)) continue;
-		if (requireExported && !isExported(node)) continue;
 		out.push(buildDescriptor(node, sourceFile, fileAbs));
 	}
 	return out;

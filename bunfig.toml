@@ -1,0 +1,6 @@
+[test]
+# The integration tests parse real TS files through the full pipeline; under
+# CPU load (CI, a concurrent build) the 5s default flakes. 15s is generous
+# without masking a real hang. Scoped here because utils-uniqueness is its own
+# git repo — do not touch the chomp-2 root bunfig.toml.
+timeout = 15000

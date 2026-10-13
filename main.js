@@ -5,7 +5,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const {
-	findRepoRoot,
+	pickRepoRoot,
 	isIgnored,
 	inUtilsFolder,
 	canSeeCanon,
@@ -138,15 +138,13 @@ const collectFiles = (roots, repoRoot, shouldSkip, exts, ignoreDirs) => {
 
 const parseUtils = (files, config, role = "CANONICAL") => {
 	const utils = [];
-	// The canonical catalog is the *public API* of the utils folder: only
-	// exported functions are reuse targets. Private helpers (e.g. a module-local
-	// object builder) must not become canonicals, or every structurally similar
-	// app function over-matches them. App/candidate functions are scanned as-is.
-	const requireExported = role === "CANONICAL" ? true : config.requireExported;
+	// Every function in every file is a comparable utility — there is no
+	// exported-only contract for either role.
+	void role;
 	for (const { file, rel } of files) {
 		let parsed;
 		try {
-			parsed = parseFunctions(file, { requireExported });
+			parsed = parseFunctions(file);
 		} catch (err) {
 			console.warn(`[utils-uniqueness] could not parse ${rel}: ${err && err.message ? err.message : err}`);
 			continue;
@@ -304,7 +302,7 @@ const comparableCanons = (part, canonUtils) => {
 const findParts = (file, rel, canonUtils, config) => {
 	let parts;
 	try {
-		parts = parseParts(file, { requireExported: config.requireExported });
+		parts = parseParts(file);
 	} catch (err) {
 		console.warn(`[utils-uniqueness] could not parse parts of ${rel}: ${err && err.message ? err.message : err}`);
 
@@ -312,9 +310,11 @@ const findParts = (file, rel, canonUtils, config) => {
 	}
 	const found = [];
 	for (const part of parts) {
-		const pool = comparableCanons(part, canonUtils);
-		if (pool.length === 0) continue;
+		// The candidate (not the raw part) carries nodeCount — the size
+		// pre-filter must compare on it.
 		const candidate = { ...buildPartCandidate(part, config), path: rel };
+		const pool = comparableCanons(candidate, canonUtils);
+		if (pool.length === 0) continue;
 		const { kept } = applyFilters(matchPairs([candidate], pool, config));
 		const ranked = [...kept].sort((a, b) => b.decision.confidence - a.decision.confidence);
 		if (ranked.length === 0) continue;
@@ -457,8 +457,7 @@ const main = async () => {
 	if (args.proposeUtils) config.proposeUtils = true;
 	if (args.log) log.enable(args.log);
 	await whenReady(config);
-	const rootMarkers = config.rootMarkers;
-	const repoRoot = args.repoRoot ? path.resolve(cwd, args.repoRoot) : findRepoRoot(cwd, rootMarkers) || cwd;
+	const repoRoot = pickRepoRoot({ cwd, configSource: loaded ? loaded.source : null, explicitRepoRoot: args.repoRoot, rootMarkers: config.rootMarkers });
 
 	const configRoots = (config.utilsFolder || []).map((d) => String(d).replace(/\\/g, "/").replace(/\/+$/, ""));
 	const roots = args.roots || configRoots;

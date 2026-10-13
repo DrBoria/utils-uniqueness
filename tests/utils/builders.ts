@@ -10,8 +10,9 @@ export const exportedBuild = (input: { id: string; name: string; tags: string[] 
 	};
 };
 
-// Private internal helper — must NOT be a canonical reuse target.
-// Deliberately NOT exported. Structurally identical to the app builder below.
+// Internal (non-exported) helper. There is no exported-only contract: every
+// function in the canonical folder is a reuse target, so this one is a
+// legitimate canonical too.
 const privateBuild = (input: { id: string; name: string; tags: string[] }) => ({
 	resourceType: "Thing",
 	id: input.id,

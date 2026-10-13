@@ -14,7 +14,7 @@ const parseCandidates = async (source: string, names: string[]) => {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mu-test-"));
 	const file = path.join(dir, "sample.ts");
 	fs.writeFileSync(file, source, "utf8");
-	const parsed = parseFunctions(file, { requireExported: false });
+	const parsed = parseFunctions(file);
 	return names.map((n) => {
 		const d = parsed.find((p) => p.name === n);
 		if (!d) throw new Error(`function ${n} not found`);

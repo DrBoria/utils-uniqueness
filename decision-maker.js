@@ -51,10 +51,18 @@ const resolveThresholds = (opts) => {
 };
 
 // A group is "inapplicable" (weight zeroed) when the candidate has no signal
-// for it — e.g. a partial part with no signature, or a body too small to have
-// a meaningful control-flow graph.
+// for it — e.g. a body too small to have a meaningful control-flow graph.
+//
+// NOTE: signature is NOT zeroed for partial candidates. A part (Block node)
+// has no parameters, so its signature score is naturally ~0. Zeroing the
+// weight would renormalize the remaining signals upward by ~43% (totalW 1.0
+// → 0.7), letting structure-only matches (ast 0.2–0.5) cross the 0.6 similar
+// threshold. Keeping the weight at 0.3 means the ~0 signature score correctly
+// penalizes confidence: "I can't verify the interface matches, so I'm less
+// confident." A byte-for-byte body copy (structure 1.0, ast 1.0, cf 1.0,
+// sig 0.0) still scores 0.7 — above the 0.6 floor.
 const applicableOf = (candidate) => ({
-	signature: !candidate.partial,
+	signature: true,
 	structure: !!candidate.tree,
 	ast: !!candidate.tree && candidate.nodeCount >= 4,
 	controlFlow: !!candidate.tree && candidate.nodeCount >= 4,
@@ -107,6 +115,17 @@ const shortBodyNeedsHigherBar = (candidate, confidence, thresholds) =>
 const AST_VETO_THRESHOLD = 0.65;
 const astVetoes = (candidate, astScore) =>
 	!!candidate.tree && (candidate.nodeCount || 0) >= 4 && astScore < AST_VETO_THRESHOLD;
+
+// A partial candidate (Block node) has no parameters, so its signature score
+// against a no-param canon (e.g. `serialId`) is 0.95 — a no-param coincidence,
+// not evidence the body is a copy. The duplicate tier is already gated by
+// astVetoes (AST >= 0.65), but the similar tier has no such gate. Without one,
+// structure-only matches (ast 0.15–0.26) cross the 0.6 confidence floor via
+// the inflated signature score. A real body copy scores AST ~1.0; unrelated
+// blocks score < 0.3. 0.5 sits safely between.
+const PART_AST_FLOOR = 0.5;
+const partAstFloorVetoes = (candidate, astScore) =>
+	candidate.partial && !!candidate.tree && (candidate.nodeCount || 0) >= 4 && astScore < PART_AST_FLOOR;
 
 // A single-expression body that is a `collection.find(pred)?.prop` lookup.
 // Every such one-liner shares the same pattern-level skeleton (member → find →
@@ -196,7 +215,7 @@ const decide = (candidate, canon, ctx) => {
 	if (confidence >= thresholds.duplicate && canDuplicate) {
 		isDuplicate = true;
 		tier = "duplicate";
-	} else if (confidence >= thresholds.similar && !noSharedInterface(candidate, signals)) {
+	} else if (confidence >= thresholds.similar && !noSharedInterface(candidate, signals) && !partAstFloorVetoes(candidate, signals.ast.score)) {
 		tier = "similar";
 	}
 
@@ -359,7 +378,16 @@ const trashScore = (candidate) => {
 	return score;
 };
 
-const isTrash = (candidate) => trashScore(candidate) >= TRASH_THRESHOLD;
+// The trash concept only fits NAMED functions: a valueless one-liner like
+// `isRemoved = (s) => s.status === "x"` should be inlined at the call site.
+// An anonymous body (a synthetic `owner#anon@line` name — an inline .map() /
+// .filter() callback) has nothing to inline: the matcher (trashScore) is
+// correct about the body, but the verdict does not apply, so the filter cuts
+// it out. Duplicates of anonymous bodies are a different question and are
+// handled by the matchers, not by trash.
+const isAnonymous = (candidate) => String((candidate && candidate.name) || "").includes("#anon@");
+
+const isTrash = (candidate) => !isAnonymous(candidate) && trashScore(candidate) >= TRASH_THRESHOLD;
 
 module.exports = {
 	decide,
@@ -372,6 +400,7 @@ module.exports = {
 	DEFAULT_THRESHOLDS,
 	trashScore,
 	isTrash,
+	isAnonymous,
 	TRASH_THRESHOLD,
 	SUSPICIOUS_THRESHOLD,
 };

@@ -33,6 +33,44 @@ describe("test-file exclusion (default)", () => {
 		expect(config.exclude.some((p: string) => String(p).includes("e2e"))).toBe(true);
 	});
 
+	it("collectFiles skips *.stories.tsx by default (storybook demo code is not a util)", () => {
+		const config = normalizeOptions({ root: pluginDir });
+		const shouldSkip = (abs: string) => {
+			const rel = path.relative(pluginDir, abs).split(path.sep).join("/");
+			return require("../config.js").isIgnored(rel, [], config.exclude);
+		};
+		const { files } = main.collectFiles(["tests/NOT_duplicates/testfiles"], pluginDir, shouldSkip, config.exts, config.ignoreDirs);
+
+		const rels = files.map((f: any) => f.rel);
+		expect(rels).toContain("tests/NOT_duplicates/testfiles/prod.ts");
+		expect(rels).not.toContain("tests/NOT_duplicates/testfiles/prod.stories.tsx");
+	});
+
+	it("normalizeOptions carries the default story-file pattern", () => {
+		const config = normalizeOptions({ root: pluginDir });
+
+		expect(config.exclude.some((p: string) => String(p).includes("stories"))).toBe(true);
+	});
+
+	it("collectFiles skips files inside an e2e/ directory by default (e2e code is not a util)", () => {
+		const config = normalizeOptions({ root: pluginDir });
+		const shouldSkip = (abs: string) => {
+			const rel = path.relative(pluginDir, abs).split(path.sep).join("/");
+			return require("../config.js").isIgnored(rel, [], config.exclude);
+		};
+		const { files } = main.collectFiles(["tests/NOT_duplicates/testfiles"], pluginDir, shouldSkip, config.exts, config.ignoreDirs);
+
+		const rels = files.map((f: any) => f.rel);
+		expect(rels).toContain("tests/NOT_duplicates/testfiles/prod.ts");
+		expect(rels).not.toContain("tests/NOT_duplicates/testfiles/e2e/coverage.ts");
+	});
+
+	it("normalizeOptions carries the default e2e-directory pattern", () => {
+		const config = normalizeOptions({ root: pluginDir });
+
+		expect(config.exclude.some((p: string) => String(p).includes("e2e/"))).toBe(true);
+	});
+
 	it("an explicit exclude still applies on top of the defaults", () => {
 		const config = normalizeOptions({ root: pluginDir, exclude: ["**/prod.ts"] });
 		const shouldSkip = (abs: string) => {
