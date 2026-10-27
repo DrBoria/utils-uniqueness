@@ -5,7 +5,10 @@ const path = require("node:path");
 const { minimatch } = require("minimatch");
 
 const DEFAULT_EXTS = [".ts", ".tsx", ".js", ".jsx"];
-const DEFAULT_IGNORE_DIRS = ["node_modules", "dist", "build"];
+// "out" is the default VS Code extension build dir (vsce pack / F5); "coverage"
+// is the standard test-output dir. The walker does not read .gitignore, so
+// common build-artifact names must be listed here explicitly.
+const DEFAULT_IGNORE_DIRS = ["node_modules", "dist", "build", "out", "coverage"];
 const DEFAULT_ROOT_MARKERS = [".git"];
 
 // Test files are not production utils: scanning them recommends "extract to
@@ -85,6 +88,9 @@ const normalizeOptions = (opts) => {
 		ignoreDirs: o.ignoreDirs ? [...new Set([...DEFAULT_IGNORE_DIRS, ...o.ignoreDirs])] : DEFAULT_IGNORE_DIRS,
 		rootMarkers,
 		proposeUtils: o.proposeUtils === true,
+		compareAll: o.compareAll === true,
+		proposeFromLib: o.proposeFromLib === true,
+		cache: o.cache !== false,
 	};
 };
 
@@ -96,7 +102,10 @@ const layerOf = (relPath, utilsFolder) => {
 	return utilsFolder.findIndex((d) => relPath.startsWith(d));
 };
 
-const canSeeCanon = (appPath, canonPath, utilsFolder) => {
+const canSeeCanon = (appPath, canonPath, utilsFolder, compareAll = false) => {
+	// compareAll mode: every file sees every canon in the catalog, so a
+	// single-layer utilsFolder (all files in layer 0) still flags duplicates.
+	if (compareAll) return true;
 	const appLayer = layerOf(appPath, utilsFolder);
 
 	return appLayer < 0 || layerOf(canonPath, utilsFolder) < appLayer;

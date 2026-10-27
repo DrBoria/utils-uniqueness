@@ -21,6 +21,14 @@ const sourceFileFor = (fileAbs) => {
 	return file;
 };
 
+// The editor lints the in-memory buffer (ESLint `lintText`), which can differ
+// from the on-disk file. The rule passes the live source here before parsing
+// so the current buffer — not the disk state — is what gets analyzed.
+const setLiveSource = (fileAbs, text) => {
+	const sourceFile = sourceFileFor(fileAbs);
+	if (sourceFile.getFullText() !== text) sourceFile.replaceWithText(text);
+};
+
 const isComponent = (node, sourceFile) => {
 	const name = functionName(node, sourceFile);
 	if (!/^[A-Z]/.test(name)) return false;
@@ -275,9 +283,15 @@ const assignTarget = (left) => {
 // Signature extraction (raw — canonicalization happens in normalize/signature)
 // ---------------------------------------------------------------------------
 
+// ts-morph renders module-qualified types as `import("<absolute path>").Name`
+// when a full type checker is attached, but as bare `Name` otherwise. The path
+// is environment-specific, so two parses of the same code produce different
+// signature keys; strip the import prefix so both contexts compare equal.
+const sanitizeTypeText = (text) => String(text || "").replace(/import\("[^"]*"\)\./g, "").replace(/import\("[^"]*"\)/g, "import");
+
 const paramInfo = (p) => {
 	const name = p.getName() || "?";
-	const type = p.getType() ? p.getType().getText() : "";
+	const type = p.getType() ? sanitizeTypeText(p.getType().getText()) : "";
 	return {
 		name,
 		type,
@@ -311,7 +325,7 @@ const buildDescriptor = (node, sourceFile, fileAbs) => {
 	// `Day`-returning and a `string`-returning function would read as "string").
 	// The call signature's return type is the actual return type.
 	const callSig = node.getType() && node.getType().getCallSignatures ? node.getType().getCallSignatures() : [];
-	const returnType = callSig.length && callSig[0].getReturnType() ? callSig[0].getReturnType().getText() : "";
+	const returnType = callSig.length && callSig[0].getReturnType() ? sanitizeTypeText(callSig[0].getReturnType().getText()) : "";
 	const isAsync = node.getModifiers().some((m) => m.isKind(ts.SyntaxKind.AsyncKeyword));
 	const isGenerator = typeof node.getAsteriskToken === "function" ? node.getAsteriskToken() != null : false;
 
@@ -339,9 +353,128 @@ const buildDescriptor = (node, sourceFile, fileAbs) => {
 	};
 };
 
+// ---------------------------------------------------------------------------
+// Type-shape discovery — interfaces and object-literal type aliases.
+//
+// The same domain described twice (an interface in file A and a near-identical
+// one in file B) is a duplicate just like a copied function body. These have
+// no executable body, so their "body" is the member list itself: the tree is
+// root(type) → prop(memberName) → lit(normalized member type), which flows
+// through the exact same structure/AST/control-flow signals as function
+// bodies. Alias-to-name (`type A = B`) and type-query aliases (`type T =
+// SomeClass`) carry no shape of their own and are skipped — they are handled
+// by entities-uniqueness.
+// ---------------------------------------------------------------------------
+
+const collectTypeNodes = (sourceFile) => {
+	const out = [];
+	const visit = (node) => {
+		if (node.isKind(ts.SyntaxKind.InterfaceDeclaration) || node.isKind(ts.SyntaxKind.TypeAliasDeclaration)) {
+			out.push(node);
+		}
+		node.forEachChild(visit);
+	};
+	visit(sourceFile);
+	return out;
+};
+
+const typeTextOf = (typeNode) => {
+	if (!typeNode) return "";
+	return sanitizeTypeText(typeNode.getText()).replace(/\s+/g, " ").trim();
+};
+
+// One member of an interface / type literal as a plain-tree subtree:
+// prop(memberName) → lit(normalized member type). Member names and types
+// carry the shape; normalization keeps `prop`/`lit` labels (only ident /
+// var-decl are positionally renamed), so two types with the same members
+// score high on structure and AST.
+const memberToTree = (member) => {
+	const name = member.getName ? member.getName() : "?";
+	let label = "";
+	if (member.isKind(ts.SyntaxKind.PropertySignature)) {
+		const typeNode = member.getTypeNode();
+		label = typeTextOf(typeNode);
+		if (member.getQuestionToken) label += member.getQuestionToken() ? "?" : "";
+	} else if (member.isKind(ts.SyntaxKind.MethodSignature)) {
+		const params = (member.getParameters() || []).map((p) => `${p.getName()}: ${typeTextOf(p.getTypeNode())}`).join(", ");
+		const ret = member.getReturnType() ? `: ${typeTextOf(member.getReturnType())}` : "";
+		label = `fn<${params}>${ret}`;
+	} else if (member.isKind(ts.SyntaxKind.IndexSignature)) {
+		label = "index";
+	}
+	return { kind: "prop", label: name || "?", children: label ? [{ kind: "lit", label, children: [] }] : [] };
+};
+
+// The members of an interface, including the members it inherits — a type
+// that extends a base describes the base's members too, so a copy of the
+// base must be comparable against the full shape.
+const inheritedMembers = (node, acc = [], seen = new Set()) => {
+	const heritage = node.getHeritageClauses ? node.getHeritageClauses() : [];
+	for (const clause of heritage) {
+		for (const typeNode of clause.getTypeNodes()) {
+			// A heritage type is an ExpressionWithTypeArguments whose
+			// expression is the base name (e.g. `extends Disposable`).
+			const expr = typeNode.isKind(ts.SyntaxKind.ExpressionWithTypeArguments) ? typeNode.getExpression() : typeNode;
+			const baseName = expr && expr.isKind(ts.SyntaxKind.Identifier) ? expr.getText() : null;
+			if (!baseName || seen.has(baseName)) continue;
+			seen.add(baseName);
+			const target = node.getSourceFile().getDescendantsOfKind(ts.SyntaxKind.InterfaceDeclaration).find((i) => i.getName() === baseName);
+			if (target) inheritedMembers(target, acc, seen);
+		}
+	}
+	acc.push(...node.getMembers());
+	return acc;
+};
+
+const buildTypeDescriptor = (node, sourceFile, fileAbs) => {
+	const name = node.getName() || "?";
+
+	let members = null;
+	if (node.isKind(ts.SyntaxKind.InterfaceDeclaration)) {
+		members = inheritedMembers(node);
+	} else if (node.isKind(ts.SyntaxKind.TypeAliasDeclaration)) {
+		const typeNode = node.getTypeNode();
+		// Only object-literal aliases describe a shape. Aliases whose text
+		// references a class (type T = SomeClass) or another named type carry
+		// no own shape.
+		if (typeNode && typeNode.isKind(ts.SyntaxKind.TypeLiteral) && !typeNode.getDescendantsOfKind(ts.SyntaxKind.TypeQuery).length) {
+			members = typeNode.getMembers();
+		}
+	}
+	if (!members || members.length === 0) return null;
+
+	const children = members.map(memberToTree);
+	const bodyTree = { kind: "type", label: name, children };
+	// The member list as a compact, order-sensitive signature: two types with
+	// the same members in the same order get an exact signature match.
+	const returnType = `{${children.map((c) => `${c.label}:${(c.children[0] && c.children[0].label) || "?"}`).join(";")}}`;
+
+	const line = node.getStartLineNumber();
+	const endLine = node.getEndLineNumber();
+	const column = columnAt(sourceFile, node.getStart());
+
+	return {
+		name,
+		path: fileAbs,
+		line,
+		endLine,
+		column,
+		params: [],
+		returnType,
+		typeParams: (node.getTypeParameters ? (node.getTypeParameters() || []).map((tp) => (tp.getName ? tp.getName() : "")) : []),
+		flags: {
+			async: false,
+			generator: false,
+		},
+		bodyTree,
+		rawText: node.getText(),
+	};
+};
+
 // Collects EVERY function in the file — exported, non-exported, nested,
-// anonymous callbacks. Unnamed functions get synthetic names (see
-// functionName) and are compared by structure, not by name.
+// anonymous callbacks — plus every interface / object-literal type alias.
+// Unnamed functions get synthetic names (see functionName) and are compared
+// by structure, not by name.
 const parseFunctions = (fileAbs) => {
 	const sourceFile = sourceFileFor(fileAbs);
 
@@ -349,6 +482,10 @@ const parseFunctions = (fileAbs) => {
 	for (const node of collectFunctionNodes(sourceFile)) {
 		if (isComponent(node, sourceFile)) continue;
 		out.push(buildDescriptor(node, sourceFile, fileAbs));
+	}
+	for (const node of collectTypeNodes(sourceFile)) {
+		const descriptor = buildTypeDescriptor(node, sourceFile, fileAbs);
+		if (descriptor) out.push(descriptor);
 	}
 	return out;
 };
@@ -410,6 +547,7 @@ module.exports = {
 	whenReady: async () => {},
 	parseFunctions,
 	parseParts,
+	setLiveSource,
 	functionName,
 	toPlainTree,
 };

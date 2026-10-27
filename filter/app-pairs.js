@@ -35,10 +35,16 @@ const MIN_COPY_PARAMS = 1;
 // signals). Confidence-only pairs — used to unit-test the clique/floor
 // machinery in isolation — have no measurement, so the policy passes them
 // through untouched.
+// A type descriptor (interface / object-literal type) has no parameters —
+// its whole shape is the member list, so the 0-param factory gate does not
+// apply to it: two types with near-identical member trees ARE mutual copies.
+const isTypeCandidate = (c) => !!(c && c.bodyTree && c.bodyTree.kind === "type");
+
 const isCopyCandidate = (m) => {
 	const signals = m.decision && m.decision.signals;
 	if (!signals) return true;
 	if ((signals.ast ? signals.ast.score : 0) < AST_COPY_FLOOR) return false;
+	if (isTypeCandidate(m.app) && isTypeCandidate(m.peer)) return true;
 	const appParams = (m.app && m.app.params) || [];
 	const peerParams = (m.peer && m.peer.params) || [];
 	return appParams.length >= MIN_COPY_PARAMS && peerParams.length >= MIN_COPY_PARAMS;

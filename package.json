@@ -33,7 +33,9 @@
     "filter/",
     "playgrounds/",
     "bin/",
-    "README.md"
+    "README.md",
+    "self-catalog.js",
+    "lib-registry.js"
   ],
   "exports": {
     ".": "./index.js",

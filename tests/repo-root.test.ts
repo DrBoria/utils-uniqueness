@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it } from "vitest";
 import { resolve, dirname, join } from "node:path";
 import { pickRepoRoot } from "../config";
 

@@ -44,6 +44,7 @@ const parseArgs = (argv) => {
 		check: false,
 		report: null,
 		appRoots: null,
+		files: null,
 		ignoreDirs: null,
 		verbose: false,
 		include: null,
@@ -76,6 +77,9 @@ const parseArgs = (argv) => {
 		} else if (a === "--app-roots") {
 			if (!argv[i + 1]) fail("--app-roots requires a value (colon-separated list of directories)");
 			cfg.appRoots = argv[++i].split(":").filter(Boolean);
+		} else if (a === "--files") {
+			if (!argv[i + 1]) fail("--files requires a value (colon-separated list of files)");
+			cfg.files = argv[++i].split(":").filter(Boolean);
 		} else if (a === "--ignore-dirs") {
 			if (!argv[i + 1]) fail("--ignore-dirs requires a value (colon-separated list of directory names)");
 			cfg.ignoreDirs = argv[++i].split(":").filter(Boolean);
@@ -106,7 +110,7 @@ const parseArgs = (argv) => {
 			if (!argv[i + 1]) fail("--config requires a value (path to an eslint.config.js or a standalone options file)");
 			cfg.configFile = argv[++i];
 		} else if (a === "--help" || a === "-h") {
-			console.log("Usage: utils-uniqueness [--roots a:b] [--out file] [--registry file] [--repo-root dir] [--check] [--report [file.md]] [--app-roots a:b] [--ignore-dirs a:b] [--include a.ts:b.ts] [--thresholds dup:sim] [--parts] [--propose-utils] [--config file] [--log file] [--min-cluster N] [--verbose]");
+			console.log("Usage: utils-uniqueness [--roots a:b] [--out file] [--registry file] [--repo-root dir] [--check] [--report [file.md]] [--app-roots a:b] [--files a.ts:b.ts] [--ignore-dirs a:b] [--include a.ts:b.ts] [--thresholds dup:sim] [--parts] [--propose-utils] [--config file] [--log file] [--min-cluster N] [--verbose]");
 			console.log("Rule options (weights, thresholds, parts, include, ignoreDirs, utilsFolder) are read from the consumer's eslint.config.js (rule md-code/utils-uniqueness) or md-code-utils-uniqueness.config.js; --config points to a specific file. CLI flags override the config.");
 			process.exit(0);
 		} else {
@@ -165,7 +169,7 @@ const matchPairs = (appUtils, canonUtils, config) => {
 	for (const app of appUtils) {
 		for (const canon of canonUtils) {
 			if (canon.path === app.path && canon.name === app.name) continue;
-			if (!canSeeCanon(app.path, canon.path, config.utilsFolder)) continue;
+			if (!canSeeCanon(app.path, canon.path, config.utilsFolder, config.compareAll)) continue;
 			if (log.enabled()) log.stage("matcher:before", { app: { name: app.name, path: app.path }, canon: { name: canon.name, path: canon.path } });
 			const signals = matchSignals(app, canon);
 			if (log.enabled()) log.stage("matcher:after", { app: { name: app.name, path: app.path }, canon: { name: canon.name, path: canon.path }, signals });
@@ -313,7 +317,10 @@ const findParts = (file, rel, canonUtils, config) => {
 		// The candidate (not the raw part) carries nodeCount — the size
 		// pre-filter must compare on it.
 		const candidate = { ...buildPartCandidate(part, config), path: rel };
-		const pool = comparableCanons(candidate, canonUtils);
+		// A part never duplicates its own file: matchPairs skips same
+		// path+name, but a part's owner name can differ from the canon's
+		// (e.g. an anonymous arrow), so filter the pool by path too.
+		const pool = comparableCanons(candidate, canonUtils).filter((c) => c.path !== rel);
 		if (pool.length === 0) continue;
 		const { kept } = applyFilters(matchPairs([candidate], pool, config));
 		const ranked = [...kept].sort((a, b) => b.decision.confidence - a.decision.confidence);
@@ -369,7 +376,15 @@ const buildUtilsReport = async (args, repoRoot, roots, config, registry, catalog
 
 	const appInclude = args.appRoots ? [] : config.include;
 	const appShouldSkip = (abs) => isIgnored(relPosix(repoRoot, abs), appInclude, config.exclude);
-	const appFiles = collectFiles(args.appRoots || ["."], repoRoot, appShouldSkip, exts, ignoreDirs);
+	// --files restricts the app-side candidate scan to the given files (agent
+	// stop-hooks lint only changed files); the canonical (roots) scan stays folder-based.
+	const appFiles = args.files
+		? (() => {
+			const files = args.files.map((rel) => ({ file: resolveAgainst(rel, repoRoot), rel: rel.split(path.sep).join("/") })).filter((f) => fs.existsSync(f.file) && fs.statSync(f.file).isFile());
+
+			return { files, count: files.length };
+		})()
+		: collectFiles(args.appRoots || ["."], repoRoot, appShouldSkip, exts, ignoreDirs);
 	const appUtils = parseUtils(appFiles.files, config, "CANDIDATE");
 	// §6: the trash decision runs BEFORE any comparison. Every candidate gets
 	// a score once; the score then rides along with the candidate into the
@@ -461,6 +476,22 @@ const main = async () => {
 
 	const configRoots = (config.utilsFolder || []).map((d) => String(d).replace(/\\/g, "/").replace(/\/+$/, ""));
 	const roots = args.roots || configRoots;
+
+	// --files is a partial scan (agent stop-hooks) — skip the catalog entirely
+	// so a single-file scan does not clobber the folder-based catalog. Roots
+	// may be empty (the canonical scan simply yields no catalog utils).
+	if (args.files?.length) {
+		const reportPath = args.report ? (path.isAbsolute(args.report) ? args.report : path.resolve(process.cwd(), args.report)) : null;
+		if (reportPath) {
+			const comp = await buildUtilsReport(args, repoRoot, roots, config, loadRegistry(config), ((loadCatalog(config) || {}).utils) || []);
+			fs.mkdirSync(path.dirname(reportPath), { recursive: true });
+			fs.writeFileSync(reportPath, renderUtilsReport(comp, args.verbose), "utf8");
+			console.log(`[utils-uniqueness] wrote report ${reportPath}`);
+		}
+		log.flush();
+		return;
+	}
+
 	if (!roots || roots.length === 0) {
 		fail("no scan roots: pass --roots <dir1>:<dir2> or set utilsFolder in the rule options (eslint.config.js / md-code-utils-uniqueness.config.js)");
 	}
