@@ -123,3 +123,7 @@ report.js                   Markdown report
 - **`matcher/`** — `matchSignals(candidate, canon)` returns the four group scores.
 - **`decision-maker.js`** — `decide` combines the scores into a confidence and a tier; `bestOf` picks the strongest canonical match.
 - **`filter/`** — drops composition (a function that calls the canonical util) and structure-less candidates, then clusters repeated app-side matches into "missing util" suggestions.
+
+## License
+
+[Apache License 2.0](./LICENSE)

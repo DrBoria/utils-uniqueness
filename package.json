@@ -2,7 +2,16 @@
   "name": "@md-code/utils-uniqueness",
   "version": "0.1.1",
   "description": "ESLint rule and CLI that find duplicate utility functions by comparing signature, structure, AST and control flow against a canonical utils folder.",
-  "license": "MIT",
+  "license": "Apache-2.0",
+  "author": "DrBoria <dr.boria@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DrBoria/utils-uniqueness.git"
+  },
+  "bugs": {
+    "url": "https://github.com/DrBoria/utils-uniqueness/issues"
+  },
+  "homepage": "https://github.com/DrBoria/utils-uniqueness#readme",
   "keywords": [
     "eslint",
     "eslintplugin",
