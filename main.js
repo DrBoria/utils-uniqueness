@@ -16,7 +16,7 @@ const {
 	loadCatalog,
 } = require("./config");
 const { walk, writeCatalog, slimRecord, dedupeAndSort } = require("./utils");
-const { parseFunctions, parseParts, whenReady } = require("./playgrounds/typescript.js");
+const { parseFunctions, parseParts, setTsConfig, whenReady } = require("./playgrounds/typescript.js");
 const { buildCandidate, buildPartCandidate } = require("./normalize/candidate.js");
 const { matchSignals } = require("./matcher");
 const { decide, isTrash, trashScore } = require("./decision-maker");
@@ -466,6 +466,7 @@ const main = async () => {
 	}
 
 	const config = normalizeOptions(configOptions);
+	setTsConfig(config.tsconfig);
 	if (args.include) config.include = [...new Set([...(config.include || []), ...args.include])];
 	if (args.thresholds) config.thresholds = { ...(config.thresholds || {}), ...args.thresholds };
 	if (args.parts) config.parts = true;
@@ -499,7 +500,7 @@ const main = async () => {
 		config.utilsFolder = roots;
 	}
 
-	const outPath = resolveAgainst(args.out || config.catalogPath, repoRoot);
+	const outPath = resolveAgainst(args.out || config.exportPath, repoRoot);
 	const registry = args.registry ? loadRegistry({ ...config, registry: null, registryPath: args.registry }) : loadRegistry(config);
 	const catalogUtils = ((loadCatalog(config) || {}).utils) || [];
 

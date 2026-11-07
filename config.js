@@ -74,10 +74,18 @@ const normalizeOptions = (opts) => {
 
 	return {
 		root,
+		// Where the project's TypeScript lives. Types are read from the checker
+		// (`paths`, `baseUrl`, module resolution), so a program built without this
+		// reads every aliased import as `any` and two identical signatures stop
+		// looking identical. Resolved against `root`; discovery from the nearest
+		// tsconfig is the fallback when it is not given.
+		tsconfig: o.tsconfig ? path.resolve(root, String(o.tsconfig)) : null,
 		registry: o.registry || null,
 		registryPath: o.registryPath || "reports/utils-registry.json",
 		catalog: o.catalog || null,
-		catalogPath: o.catalogPath || "reports/utils-catalog.json",
+		// `exportPath` is THE name for "where this rule writes its catalog",
+		// shared by every rule in the family; `catalogPath` is its old name.
+		exportPath: o.exportPath || o.catalogPath || "reports/utils-catalog.json",
 		parts: o.parts === true,
 		weights: o.weights && typeof o.weights === "object" ? o.weights : null,
 		thresholds: o.thresholds && typeof o.thresholds === "object" ? o.thresholds : null,
@@ -273,8 +281,8 @@ const loadRegistry = (config) => {
 
 const loadCatalog = (config) => {
 	if (config.catalog) return loadJson(config.catalog);
-	if (config.catalogPath) {
-		const file = path.isAbsolute(config.catalogPath) ? config.catalogPath : path.join(config.root, config.catalogPath);
+	if (config.exportPath) {
+		const file = path.isAbsolute(config.exportPath) ? config.exportPath : path.join(config.root, config.exportPath);
 		if (fs.existsSync(file)) return loadJson(file);
 	}
 	return null;

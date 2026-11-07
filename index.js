@@ -13,6 +13,29 @@ const { buildLibRegistry, fileImportSpecifiers, suggestFromLib } = require("./li
 
 const normalizedCanons = new WeakMap();
 
+// A file matches a single glob when the exclude-style matcher accepts it
+// (`isIgnored` reports the NEGATION of an include match).
+const matchesPattern = (rel, pattern) =>
+	typeof pattern === "string" && pattern.length > 0 && !isIgnored(rel, [pattern], []);
+
+// `knownDuplicates: [[globA, globB], ...]` lists pairs of file sets whose
+// duplication is known by construction (two IDE adapters implementing the same
+// contract, a twin file per platform, ...). Any number of pairs works, and each
+// side is any glob — a folder glob or an exact file path. Only the two sides of
+// a listed pair are excused from each other; every other pair of files is still
+// compared and still reported.
+const isKnownDuplicate = (fileA, fileB, knownDuplicates) => {
+	if (!Array.isArray(knownDuplicates)) return false;
+
+	return knownDuplicates.some(
+		(pair) =>
+			Array.isArray(pair) &&
+			pair.length === 2 &&
+			((matchesPattern(fileA, pair[0]) && matchesPattern(fileB, pair[1])) ||
+				(matchesPattern(fileA, pair[1]) && matchesPattern(fileB, pair[0]))),
+	);
+};
+
 const normalizeCanon = (canon, config) => {
 	if (!normalizedCanons.has(canon)) normalizedCanons.set(canon, buildCandidate(canon, config));
 
@@ -37,13 +60,22 @@ const createRule = () => {
 						registry: { type: "string" },
 						registryPath: { type: "string" },
 						catalog: { type: "array" },
-						catalogPath: { type: "string" },
+						exportPath: {
+							type: "string",
+							description: "Where the catalog is written, relative to `root`. Default `reports/utils-catalog.json`.",
+						},
+						catalogPath: { type: "string", description: "Deprecated alias of `exportPath`." },
 						parts: { type: "boolean" },
 						weights: { type: "object" },
 						thresholds: { type: "object" },
 						utilsFolder: { type: "array" },
 						include: { type: "array" },
 						exclude: { type: "array" },
+						knownDuplicates: {
+							type: "array",
+							description:
+								"Pairs of globs (folders or exact file paths) whose duplication is known and accepted: [[globA, globB], ...]. Only the two sides of a listed pair are excused from each other; everything else is still reported.",
+						},
 						exts: { type: "array" },
 						ignoreDirs: { type: "array" },
 						rootMarkers: { type: "array" },
@@ -140,11 +172,15 @@ const createRule = () => {
 						pairs.push({ canon: normCanon, signals, decision });
 					}
 					pairs.sort((a, b) => b.decision.confidence - a.decision.confidence);
+					// A declared known-duplicate pair is not reported — but only that
+					// pair: the same function may still duplicate something else and
+					// that finding must survive.
+					const reportable = pairs.filter((p) => !isKnownDuplicate(relPath, p.canon.path, options.knownDuplicates));
 					// Report only the single best match per candidate: a copy
 					// pasted against several identical canons is one duplicate,
 					// not one per canon. Pairs are sorted by confidence, so the
 					// first duplicate is the canonical one to point at.
-					for (const p of pairs) {
+					for (const p of reportable) {
 						if (!p.decision.isDuplicate) continue;
 						const { kept } = applyFilters([{ app: candidate, canon: p.canon, decision: p.decision, tier: p.decision.tier, reason: p.decision.reason }]);
 						if (kept.length === 0) continue;
@@ -160,6 +196,7 @@ const createRule = () => {
 				if (config.parts) {
 					const canons = catalogUtils.map((canon) => normalizeCanon(canon, config));
 					for (const { part, best } of findParts(filename, relPath, canons, config)) {
+						if (isKnownDuplicate(relPath, best.canon.path, options.knownDuplicates)) continue;
 						context.report({
 							loc: { start: { line: part.line, column: part.column }, end: { line: part.endLine, column: 0 } },
 							messageId: "partOfUtil",

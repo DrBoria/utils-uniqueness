@@ -1,5 +1,6 @@
 "use strict";
 
+const path = require("node:path");
 const { Project, ts } = require("ts-morph");
 
 // ---------------------------------------------------------------------------
@@ -10,14 +11,52 @@ const { Project, ts } = require("ts-morph");
 
 // One shared Project across the whole scan. ts-morph caches parsed files, so
 // re-adding the same path returns the same SourceFile (no re-parse).
-const project = new Project({ useInMemoryFileSystem: false, compilerOptions: { target: ts.ScriptTarget.ES2022 } });
-const fileCache = new Map();
+//
+// The project is built from the repo's OWN tsconfig, because parameter and
+// return types come from the type checker: `paths`, `baseUrl` and module
+// resolution live there, and a program that does not know them reads an aliased
+// import as `any`. Two functions that take the same type then stop looking
+// alike, and a real duplicate is never reported. The config is discovered from
+// the parsed file (the nearest `tsconfig.json`), or set explicitly with
+// `setTsConfig` when the project keeps it somewhere else.
+let project = null;
+let projectConfig = null;
+let explicitConfig = null;
+let fileCache = new Map();
+
+const setTsConfig = (configPath) => {
+	const next = configPath ? path.resolve(configPath) : null;
+	if (next === explicitConfig) return;
+	explicitConfig = next;
+	project = null;
+	fileCache = new Map();
+};
+
+const configFor = (fileAbs) => {
+	// The file's OWN tree first: a monorepo has a tsconfig per package, and the
+	// nearest one is the one that describes this file. The explicit path is the
+	// fallback for a project whose config does not sit above its sources.
+	return ts.findConfigFile(path.dirname(fileAbs), ts.sys.fileExists) || explicitConfig;
+};
+
+const projectFor = (fileAbs) => {
+	const config = configFor(fileAbs);
+	if (project && config === projectConfig) return project;
+	projectConfig = config;
+	project = config
+		? new Project({ tsConfigFilePath: config, useInMemoryFileSystem: false })
+		: new Project({ useInMemoryFileSystem: false, compilerOptions: { target: ts.ScriptTarget.ES2022 } });
+	fileCache = new Map();
+
+	return project;
+};
 
 const sourceFileFor = (fileAbs) => {
 	const cached = fileCache.get(fileAbs);
 	if (cached) return cached;
-	const file = project.addSourceFileAtPath(fileAbs);
+	const file = projectFor(fileAbs).addSourceFileAtPath(fileAbs);
 	fileCache.set(fileAbs, file);
+
 	return file;
 };
 
@@ -548,6 +587,7 @@ module.exports = {
 	parseFunctions,
 	parseParts,
 	setLiveSource,
+	setTsConfig,
 	functionName,
 	toPlainTree,
 };
