@@ -115,8 +115,8 @@ describe("clusterAppPairs — pure clustering of mutual copies", () => {
 		// The O(n²) match pre-filters on body size before computing signals: a
 		// one-liner and a 100-node function cannot be mutual copies, so the pair
 		// is never clustered even if a (hypothetical) high confidence were fed.
-		const big = { ...cand("app/big.ts", "big"), nodeCount: 100 };
-		const small = { ...cand("app/small.ts", "small"), nodeCount: 2 };
+		const big = { ...cand("app/big.ts", "big"), nodes: 100 };
+		const small = { ...cand("app/small.ts", "small"), nodes: 2 };
 		const clusters = clusterAppPairs([
 			{ app: small, peer: big, decision: { confidence: 0.98, tier: "duplicate" } },
 		]);

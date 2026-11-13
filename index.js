@@ -10,6 +10,8 @@ const { matchSignals } = require("./matcher");
 const { decide } = require("./decision-maker");
 const { applyFilters, findParts } = require("./main");
 const { buildLibRegistry, fileImportSpecifiers, suggestFromLib } = require("./lib-registry");
+const { render } = require("./report/errorTypes/codes");
+const { CODE, TIER } = require("./constants");
 
 const normalizedCanons = new WeakMap();
 
@@ -59,6 +61,7 @@ const createRule = () => {
 					properties: {
 						registry: { type: "string" },
 						registryPath: { type: "string" },
+						tsconfig: { type: "string" },
 						catalog: { type: "array" },
 						exportPath: {
 							type: "string",
@@ -132,7 +135,7 @@ const createRule = () => {
 				const suggestions = suggestFromLib(name, libRegistry, imports);
 				if (suggestions.length === 0) return "";
 				const list = suggestions.map((s) => `\`${s.name}\` from \`${s.lib}\``).join(", ");
-				return ` Consider using ${list} instead of a local implementation.`;
+				return render(CODE.LibHint, { list });
 			};
 
 			const checkDuplicates = () => {
@@ -167,7 +170,7 @@ const createRule = () => {
 						}
 						if (!canSeeCanon(relPath, canon.path, config.utilsFolder, config.compareAll)) continue;
 						const normCanon = normalizeCanon(canon, config);
-						const signals = matchSignals(candidate, normCanon);
+						const signals = matchSignals(candidate, normCanon, { reliability: config.weights?.evidence });
 						const decision = decide(candidate, normCanon, { signals, weights: config.weights, thresholds: config.thresholds });
 						pairs.push({ canon: normCanon, signals, decision });
 					}
@@ -185,10 +188,15 @@ const createRule = () => {
 						const { kept } = applyFilters([{ app: candidate, canon: p.canon, decision: p.decision, tier: p.decision.tier, reason: p.decision.reason }]);
 						if (kept.length === 0) continue;
 						const line = d.line || 1;
+						const duplicate = p.decision.isDuplicate || p.decision.tier === TIER.Duplicate;
 						context.report({
 							loc: { start: { line, column: 0 }, end: { line, column: 0 } },
-							messageId: "duplicateUtil",
-							data: { name: candidate.name, canonName: p.canon.name, reason: p.decision.reason, libHint: libHint(candidate.name, liveText) },
+							message:
+								render(duplicate ? CODE.Duplicate : CODE.Similar, {
+									left: `\`${candidate.name}\``,
+									right: `\`${p.canon.name}\``,
+									confidence: `${p.decision.confidence.toFixed(2)} (${Math.round(p.decision.confidence * 100)}%)`,
+								}) + libHint(candidate.name, liveText),
 						});
 						break;
 					}
@@ -199,8 +207,12 @@ const createRule = () => {
 						if (isKnownDuplicate(relPath, best.canon.path, options.knownDuplicates)) continue;
 						context.report({
 							loc: { start: { line: part.line, column: part.column }, end: { line: part.endLine, column: 0 } },
-							messageId: "partOfUtil",
-							data: { owner: part.owner, util: best.canon.name, path: best.canon.path, reason: best.decision.reason, libHint: libHint(best.canon.name, liveText) },
+							message:
+								render(CODE.PartDuplicate, {
+									left: `\`${part.owner}\``,
+									right: `\`${best.canon.name}\` from \`${best.canon.path}\``,
+									confidence: `${best.decision.confidence.toFixed(2)} (${Math.round(best.decision.confidence * 100)}%)`,
+								}) + libHint(best.canon.name, liveText),
 						});
 					}
 				}

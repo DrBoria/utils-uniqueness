@@ -8,6 +8,9 @@ const crypto = require("node:crypto");
 const { isIgnored } = require("./config");
 const { collectFiles, parseUtils } = require("./main");
 const { slimRecord, dedupeAndSort, writeCatalog } = require("./utils");
+const { warn } = require("./report/output");
+const { render } = require("./report/errorTypes/codes");
+const { CODE } = require("./constants");
 
 // Self-maintained catalog: the rule keeps its own catalog fresh by walking the
 // configured roots on every lint and re-parsing only the files whose
@@ -91,7 +94,7 @@ const refreshCatalog = (config, { budgetMs = 30000 } = {}) => {
 			writeCatalog(catalogPath, records);
 			wrote = true;
 		} catch (err) {
-			console.warn(`[utils-uniqueness] self-catalog: could not write ${catalogPath}: ${err && err.message ? err.message : err}`);
+			warn(render(CODE.CatalogWriteFailed, { path: catalogPath, reason: err && err.message ? err.message : err }));
 			return false;
 		}
 	}
@@ -104,7 +107,7 @@ const refreshCatalog = (config, { budgetMs = 30000 } = {}) => {
 		// the next lint simply re-parses more files.
 	}
 
-	if (budgetHit) console.warn("[utils-uniqueness] self-catalog: budget exhausted, catalog may be partially stale");
+	if (budgetHit) warn(render(CODE.CatalogBudget));
 	return wrote;
 };
 

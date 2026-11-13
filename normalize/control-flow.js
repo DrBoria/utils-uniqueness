@@ -3,8 +3,9 @@
 const { pipe, map } = require("remeda");
 
 // The kinds that form the control-flow sequence — the ordered skeleton of the
-// body (branch / loop / return / throw / call / assign / await / yield).
-const FLOW_KINDS = new Set(["if", "for", "for-of", "while", "do-while", "switch", "try", "catch", "cond", "return", "throw", "await", "yield", "call", "new", "assign", "var"]);
+// body (branch / loop / return / throw / call / assign / await / yield). The list
+// is vocabulary: see ../constants section 5c.
+const { FLOW_KINDS } = require("../constants");
 
 // ---------------------------------------------------------------------------
 // Control-flow sequence: an ordered, name-independent trace of the structural
@@ -13,12 +14,35 @@ const FLOW_KINDS = new Set(["if", "for", "for-of", "while", "do-while", "switch"
 // when the expressions inside differ.
 // ---------------------------------------------------------------------------
 
-const flowSequence = (tree, out = []) => {
+// The skeleton keeps its CONTEXT: a call inside `try` is not the call outside it.
+// Each step is written `try>if/call` — the enclosing flow blocks, then the block
+// itself — so two steps are the same step only in the same place of the shape.
+// A DECLARATION carries its KEYWORD: `const x` and `let x` are different steps,
+// and the shape says so instead of calling both `var`.
+const stepKindOf = (tree) => (typeof tree.keyword === "string" ? `${tree.kind}:${tree.keyword}` : tree.kind);
+
+const flowSteps = (tree, stack = [], out = [], depth = 0) => {
 	if (!tree) return out;
-	if (FLOW_KINDS.has(tree.kind)) out.push(tree.kind);
-	for (const c of tree.children || []) flowSequence(c, out);
+	// A NESTED function is a different flow: its `return` is not this body's return, and a
+	// call inside a callback is not a step of the body that merely passes the callback.
+	// The skeleton is the order of THIS body, so an inner function is not walked at all.
+	if (tree.kind === "func" && depth > 0) return out;
+	const isFlow = FLOW_KINDS.has(tree.kind);
+	const kind = stepKindOf(tree);
+	if (isFlow) out.push({ kind, path: stack.join(">"), line: tree.start ?? null, column: tree.column ?? null, columnEnd: tree.columnEnd ?? null, endLine: tree.endLine ?? null });
+	const isScope = tree.kind === "func";
+	const next = isFlow ? [...stack, kind] : isScope ? [...stack, "fn"] : stack;
+	for (const child of tree.children ?? []) flowSteps(child, next, out, depth + 1);
+
 	return out;
 };
+
+const flowSequence = (tree) => flowSteps(tree).map((step) => `${step.path}/${step.kind}`);
+
+// The same walk, keeping WHERE each step is written. Same order, same lengths as
+// `flowSequence`: the n-th token and the n-th site are the same step, so the text
+// can name the line a step sits on without re-parsing anything.
+const flowSites = (tree) => flowSteps(tree);
 
 // ---------------------------------------------------------------------------
 // Control-flow graph (CFG): basic-block-like nodes joined by edges.
@@ -134,6 +158,7 @@ const buildControlFlow = (descriptor) => {
 
 	return {
 		sequence: seq,
+		sequenceSites: flowSites(tree),
 		cfg: {
 			nodeCount: cfg.count,
 			edgeCount: cfg.edges.length,
@@ -146,4 +171,4 @@ const buildControlFlow = (descriptor) => {
 	};
 };
 
-module.exports = { buildControlFlow, flowSequence, buildCfg, defUseSummary };
+module.exports = { buildControlFlow, flowSteps, flowSequence, flowSites, buildCfg, defUseSummary };

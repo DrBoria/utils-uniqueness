@@ -77,19 +77,25 @@ const buildSignature = (descriptor) => {
 		}),
 	);
 
-	const returns = normalizeTypeText(descriptor.returnType, rename) || "?";
-	const returnRole = roleOf(returns);
-	const roles = params.map((p) => p.role);
+	const type = normalizeTypeText(descriptor.returnType, rename) || "?";
 
-	const signatureKey = `${params.map((p) => p.type).join("|")}::${returns}`;
+	// ONE entity for the return: the declared type, the role that type falls into (the
+	// same `roleOf` the parameters use) and the values the body actually returns.
+	// `returnRole`/`returnValues` were the same thing split in three fields.
+	const returns = {
+		type,
+		role: roleOf(type),
+		values: (descriptor.returnValues ?? []).map((value) => ({ role: value.role, shape: value.shape, line: value.line ?? null })),
+	};
+
+	const roles = params.map((p) => p.role);
+	const signatureKey = `${params.map((p) => p.type).join("|")}::${type}`;
 
 	return {
 		name: descriptor.name,
 		params,
 		returns,
-		returnRole,
-		roles,
-		shapeHash: shapeHash(roles, returnRole),
+		shapeHash: shapeHash(roles, returns.role),
 		signatureKey,
 		typeParams: descriptor.typeParams || [],
 		flags: descriptor.flags || {},

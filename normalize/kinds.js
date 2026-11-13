@@ -1,64 +1,13 @@
 "use strict";
 
-// ---------------------------------------------------------------------------
-// The complete vocabulary of node kinds emitted by the plain-tree builder
-// (playgrounds/typescript.js → toPlainTree). This is the SINGLE source of
-// truth for the kind language: every kind a tree can contain is listed here
-// exactly once, grouped by the role it plays.
+// The node-kind language lives in ../constants (section 5c) — it is vocabulary,
+// not normalization. This module is the historical import site, so it keeps
+// re-exporting the same names instead of forcing every consumer to change.
 //
-// This file holds ONLY the vocabulary. Each consumer that needs a selection
-// of kinds (hasStructure, flowSequence, trash scoring, pure-predicate
-// detection) owns its own Set next to the code that uses it.
-// ---------------------------------------------------------------------------
+// `KINDS` keeps its old name for the complete set; `AST_KINDS` is the same set.
 
-// Expressions — value-producing nodes.
-const EXPRESSION_KINDS = [
-	"ident",
-	"member",
-	"index",
-	"lit",
-	"bin",
-	"unary",
-	"unary-post",
-	"cond",
-	"seq",
-	"spread",
-	"object",
-	"prop",
-	"array",
-	"template",
-	"call",
-	"new",
-	"await",
-	"yield",
-	"func",
-];
+const { EXPRESSION_KINDS, JSX_KINDS, STATEMENT_KINDS, AST_KINDS } = require("../constants");
 
-// JSX — the shape of a render.
-const JSX_KINDS = ["jsx", "jsx-attr", "jsx-spread", "jsx-expr"];
-
-// Statements — control flow, declarations, and the catch-all for anything
-// else the builder does not model explicitly.
-const STATEMENT_KINDS = [
-	"if",
-	"for",
-	"for-of",
-	"while",
-	"do-while",
-	"switch",
-	"case",
-	"return",
-	"throw",
-	"try",
-	"catch",
-	"var",
-	"var-decl",
-	"assign",
-	"block",
-	"expr",
-];
-
-// The complete vocabulary: every kind the tree builder can emit, exactly once.
-const KINDS = new Set([...EXPRESSION_KINDS, ...JSX_KINDS, ...STATEMENT_KINDS]);
+const KINDS = AST_KINDS;
 
 module.exports = { KINDS, EXPRESSION_KINDS, JSX_KINDS, STATEMENT_KINDS };

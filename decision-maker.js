@@ -2,51 +2,60 @@
 
 // Four comparison groups, each weighted. The verdict is the weight-normalized
 // sum of the group scores, clamped to [0,1], then tiered against thresholds.
+//
+// Everything this file compares a number against comes from ./constants — the
+// engine owns the ARITHMETIC, never the limits.
 
-// Kinds that indicate branching — used to score "no branches" in trash.
-const BRANCH_KINDS = new Set(["if", "for", "for-of", "while", "do-while", "switch", "cond"]);
+const {
+	SIGNAL,
+	SIGNAL_ORDER,
+	TIER,
+	VETO,
+	DUPLICATE_GATES,
+	SIMILAR_GATES,
+	TONE,
+	CODE,
+	DEFAULT_WEIGHTS,
+	DEFAULT_THRESHOLDS,
+	GATE_LIMITS,
+	TRASH_THRESHOLD,
+	SUSPICIOUS_THRESHOLD,
+	MAX_TRASH_DEPTH,
+	MAX_TRASH_NODES,
+	PREDICATE_NAME_RE,
+	STATUS_FIELDS,
+	BRANCH_KINDS,
+	PREDICATE_KINDS,
+	COMPARISON_OPS,
+	LOGICAL_OPS,
+	TRASH_OPS,
+} = require("./constants");
+const { combine, weighed } = require("./evidence");
 
-// Kinds a pure predicate body may contain — no side effects, no control flow,
-// just the expressions that build up a boolean.
-const PREDICATE_KINDS = new Set(["bin", "unary", "unary-post", "member", "index", "ident", "lit"]);
-
-const GROUPS = ["signature", "structure", "ast", "controlFlow"];
-
-const DEFAULT_WEIGHTS = {
-	signature: 0.3,
-	structure: 0.3,
-	ast: 0.2,
-	controlFlow: 0.2,
-};
-
-const DEFAULT_THRESHOLDS = {
-	duplicate: 0.7,
-	// 0.5 is the literal midpoint of a 4-signal weighted average ("half the
-	// signals agree") — not a useful "similar" signal. In the chomp-2 real run
-	// 72% of the 3388 "similar" rows sat at confidence 0.50-0.60, barely above
-	// chance. Raising the floor to 0.6 drops that weak tail while leaving the
-	// 0.60+ rows (and every verified true duplicate, which lives in the 0.7+
-	// duplicate tier) untouched.
-	similar: 0.6,
-};
+// The comparison groups, in the order the report reads them. Never a bare
+// string: `SIGNAL.ControlFlow` cannot be mistyped into a group that silently
+// stops being scored.
+const GROUPS = SIGNAL_ORDER;
 
 const clamp01 = (x) => Math.max(0, Math.min(1, x));
 
 const resolveWeights = (opts) => {
 	const w = (opts && opts.weights) || {};
+	const pick = (key) => w[key] ?? DEFAULT_WEIGHTS[key];
+
 	return {
-		signature: w.signature ?? DEFAULT_WEIGHTS.signature,
-		structure: w.structure ?? DEFAULT_WEIGHTS.structure,
-		ast: w.ast ?? DEFAULT_WEIGHTS.ast,
-		controlFlow: w.controlFlow ?? DEFAULT_WEIGHTS.controlFlow,
+		[SIGNAL.Signature]: pick(SIGNAL.Signature),
+		[SIGNAL.Structure]: pick(SIGNAL.Structure),
+		[SIGNAL.Ast]: pick(SIGNAL.Ast),
+		[SIGNAL.ControlFlow]: pick(SIGNAL.ControlFlow),
 	};
 };
 
 const resolveThresholds = (opts) => {
 	const t = (opts && opts.thresholds) || {};
 	return {
-		duplicate: t.duplicate ?? DEFAULT_THRESHOLDS.duplicate,
-		similar: t.similar ?? DEFAULT_THRESHOLDS.similar,
+		[TIER.Duplicate]: t[TIER.Duplicate] ?? DEFAULT_THRESHOLDS[TIER.Duplicate],
+		[TIER.Similar]: t[TIER.Similar] ?? DEFAULT_THRESHOLDS[TIER.Similar],
 	};
 };
 
@@ -62,10 +71,10 @@ const resolveThresholds = (opts) => {
 // confident." A byte-for-byte body copy (structure 1.0, ast 1.0, cf 1.0,
 // sig 0.0) still scores 0.7 — above the 0.6 floor.
 const applicableOf = (candidate) => ({
-	signature: true,
-	structure: !!candidate.tree,
-	ast: !!candidate.tree && candidate.nodeCount >= 4,
-	controlFlow: !!candidate.tree && candidate.nodeCount >= 4,
+	[SIGNAL.Signature]: true,
+	[SIGNAL.Structure]: !!candidate.tree,
+	[SIGNAL.Ast]: !!candidate.tree && candidate.nodes >= 4,
+	[SIGNAL.ControlFlow]: !!candidate.tree && candidate.nodes >= 4,
 });
 
 // A "duplicate" verdict on a trivial function is almost always a false
@@ -76,8 +85,8 @@ const applicableOf = (candidate) => ({
 // at "similar". A one-liner ternary has ~6 nodes, and when it is a true twin
 // all four signals (including the AST veto) line up at ~1.00, so 6 is the
 // floor that keeps stubs out without capping genuine one-liner duplicates.
-const MIN_DUPLICATE_NODES = 6;
-const hasDuplicateWorthyStructure = (candidate) => (candidate.nodeCount || 0) >= MIN_DUPLICATE_NODES;
+const { MIN_DUPLICATE_NODES, SHORT_BODY_NODES, SHORT_BODY_DUPLICATE_CONFIDENCE, AST_VETO_THRESHOLD, PART_AST_FLOOR, FIND_LOOKUP_AST_VETO, TEMPLATE_AST_VETO, RETURN_ROLE_VETO_CONFIDENCE, NO_INTERFACE_SIGNATURE, NO_INTERFACE_MAX_NODES } = GATE_LIMITS;
+const hasDuplicateWorthyStructure = (candidate) => (candidate.nodes || 0) >= MIN_DUPLICATE_NODES;
 
 // Short bodies (6-7 nodes: one-liner ternaries, tiny guards) are so coarse
 // that unrelated operations can share their whole shape — e.g.
@@ -86,11 +95,9 @@ const hasDuplicateWorthyStructure = (candidate) => (candidate.nodeCount || 0) >=
 // duplicate verdict requires near-perfect agreement across all signals; a
 // single weak signal (ast ~0.6) must keep the pair in the similar tier.
 // Bodies of 8+ nodes carry enough structure for the normal threshold.
-const SHORT_BODY_NODES = 8;
-const SHORT_BODY_DUPLICATE_CONFIDENCE = 0.95;
 const shortBodyNeedsHigherBar = (candidate, confidence, thresholds) =>
-	(candidate.nodeCount || 0) < SHORT_BODY_NODES &&
-	confidence >= thresholds.duplicate &&
+	(candidate.nodes || 0) < SHORT_BODY_NODES &&
+	confidence >= thresholds[TIER.Duplicate] &&
 	confidence < SHORT_BODY_DUPLICATE_CONFIDENCE;
 
 // The AST signal captures actual body structure (subtree multiset + sequence
@@ -106,15 +113,15 @@ const shortBodyNeedsHigherBar = (candidate, confidence, thresholds) =>
 // renamed copy of a real body scores AST ~1.00 (see money/cash/parseDay), so
 // 0.6 keeps every verified true duplicate while vetoing the 0.77 FP.
 //
-// Raised to 0.65 after Fix 7 (template static text in the fingerprint): two
-// one-liners that share a `$` template prefix but do different work
-// (`moneyOrNone` `$${n.toLocaleString()}` vs `perMonth` `$${amount}/mo`) now
-// score AST 0.63 — above the old 0.6 floor — and escaped to the duplicate
-// tier at conf 0.86. Every true twin still scores AST ~1.00, so 0.65 vetoes
-// the shared-prefix FP without touching them.
-const AST_VETO_THRESHOLD = 0.65;
+// Raised to 0.75 after the subtree multiset was fixed (normalize/ast.js used to
+// count every subtree once per level, which inflated `shared` and `union` and
+// made every AST score slightly wrong). With the honest counts, the fixture
+// pairs separate cleanly: every verified true twin scores AST 1.00, while the
+// worst known false positive (`perMonth` — `` `$${amount}/mo` `` vs
+// `moneyOrNone` — `` `$${n.toLocaleString()}` ``) reaches only 0.66. The floor
+// sits between the two populations instead of on top of the FP.
 const astVetoes = (candidate, astScore) =>
-	!!candidate.tree && (candidate.nodeCount || 0) >= 4 && astScore < AST_VETO_THRESHOLD;
+	!!candidate.tree && (candidate.nodes || 0) >= 4 && astScore < AST_VETO_THRESHOLD;
 
 // A partial candidate (Block node) has no parameters, so its signature score
 // against a no-param canon (e.g. `serialId`) is 0.95 — a no-param coincidence,
@@ -123,9 +130,8 @@ const astVetoes = (candidate, astScore) =>
 // structure-only matches (ast 0.15–0.26) cross the 0.6 confidence floor via
 // the inflated signature score. A real body copy scores AST ~1.0; unrelated
 // blocks score < 0.3. 0.5 sits safely between.
-const PART_AST_FLOOR = 0.5;
 const partAstFloorVetoes = (candidate, astScore) =>
-	candidate.partial && !!candidate.tree && (candidate.nodeCount || 0) >= 4 && astScore < PART_AST_FLOOR;
+	candidate.partial && !!candidate.tree && (candidate.nodes || 0) >= 4 && astScore < PART_AST_FLOOR;
 
 // A single-expression body that is a `collection.find(pred)?.prop` lookup.
 // Every such one-liner shares the same pattern-level skeleton (member → find →
@@ -136,7 +142,6 @@ const partAstFloorVetoes = (candidate, astScore) =>
 // findVitalId at 0.70-0.78 (struct 1.00, cf 1.00, ast 0.54-0.63). A genuine
 // copy scores ast ~1.00, so a higher AST bar vetoes the FPs while keeping real
 // twins.
-const FIND_LOOKUP_AST_VETO = 0.85;
 const isSingleExpressionBody = (tree) => !!tree && (tree.kind !== "block" || (tree.children || []).length === 1);
 const isFindLookupBody = (candidate) => (candidate.calls || []).includes("find") && isSingleExpressionBody(candidate.tree);
 const findLookupVetoes = (candidate, astScore) => isFindLookupBody(candidate) && astScore < FIND_LOOKUP_AST_VETO;
@@ -155,7 +160,6 @@ const findLookupVetoes = (candidate, astScore) => isFindLookupBody(candidate) &&
 // timestamp display are different operations that share one skeleton. A
 // genuine renamed copy of a template one-liner scores ast ~1.00, so a higher
 // AST bar vetoes the FP while keeping real twins.
-const TEMPLATE_AST_VETO = 0.85;
 const isTemplateBody = (tree) => isSingleExpressionBody(tree) && tree.kind === "template";
 const templateVetoes = (candidate, astScore) => isTemplateBody(candidate.tree) && astScore < TEMPLATE_AST_VETO;
 
@@ -166,9 +170,8 @@ const templateVetoes = (candidate, astScore) => isTemplateBody(candidate.tree) &
 // inverse operations. When the return roles do not match, a duplicate verdict
 // requires near-perfect agreement on everything else; true renamed copies
 // always share the return role.
-const RETURN_ROLE_VETO_CONFIDENCE = 0.9;
 const returnRoleVetoes = (signals, confidence) =>
-	signals.signature.evidence.returnRoleMatch === false && confidence < RETURN_ROLE_VETO_CONFIDENCE;
+	signals[SIGNAL.Signature].evidence.returnRoleMatch === false && confidence < RETURN_ROLE_VETO_CONFIDENCE;
 
 // When the interfaces share nothing (parameter roles differ, return role
 // differs, names differ) and the body is small, the structure and
@@ -180,13 +183,16 @@ const returnRoleVetoes = (signals, confidence) =>
 // "similar"). Larger bodies (>= 12 nodes) keep the normal thresholds: there,
 // a body that looks alike is meaningful evidence even if the interfaces
 // diverged.
-const NO_INTERFACE_SIGNATURE = 0.3;
-const NO_INTERFACE_MAX_NODES = 12;
 const noSharedInterface = (candidate, signals) =>
-	!candidate.partial && signals.signature.score < NO_INTERFACE_SIGNATURE && (candidate.nodeCount || 0) < NO_INTERFACE_MAX_NODES;
+	!candidate.partial && signals[SIGNAL.Signature].score < NO_INTERFACE_SIGNATURE && (candidate.nodes || 0) < NO_INTERFACE_MAX_NODES;
 
 const applicableWeights = (weights, applicable) =>
 	Object.fromEntries(Object.entries(weights).map(([key, w]) => [key, applicable[key] === false ? 0 : w]));
+
+// The gates that stop a pair from being a duplicate even when the score is high
+// enough (the second list applies to the similar tier). Both come from the enum,
+// so a gate can neither be misspelled here nor left out of the report's wording.
+const DUPLICATE_VETOES = new Set(DUPLICATE_GATES);
 
 const decide = (candidate, canon, ctx) => {
 	const o = ctx || {};
@@ -199,28 +205,42 @@ const decide = (candidate, canon, ctx) => {
 		signals[key] = { score: s ? clamp01(s.score) : 0, evidence: s && s.evidence ? s.evidence : {} };
 	}
 
+	// Evidence, not an average of shares: each group's confidence is built from the
+	// number of observations it made (one matching parameter can never be a certain
+	// verdict), and the groups are averaged by their weight. Averaging — not adding —
+	// because weak evidence on four groups is still weak evidence, it does not
+	// corroborate itself into certainty.
 	const totalW = GROUPS.reduce((sum, key) => sum + weights[key], 0);
-	const weighted = GROUPS.reduce((sum, key) => sum + weights[key] * signals[key].score, 0);
-	const confidence = totalW === 0 ? 0 : clamp01(weighted / totalW);
+	const confidence = totalW === 0 ? 0 : clamp01(GROUPS.reduce((sum, key) => sum + weights[key] * signals[key].score, 0) / totalW);
 
 	let isDuplicate = false;
 	let tier = null;
-	const canDuplicate =
-		hasDuplicateWorthyStructure(candidate) &&
-		!astVetoes(candidate, signals.ast.score) &&
-		!findLookupVetoes(candidate, signals.ast.score) &&
-		!templateVetoes(candidate, signals.ast.score) &&
-		!returnRoleVetoes(signals, confidence) &&
-		!shortBodyNeedsHigherBar(candidate, confidence, thresholds);
-	if (confidence >= thresholds.duplicate && canDuplicate) {
+	// WHY a pair did not become a duplicate is as important as the score: the
+	// report prints one sentence per veto, so a reader who sees "similar, 0.86"
+	// also sees which gate held it back. Every gate that fired is named here —
+	// the names are the vocabulary of the report, not an internal detail.
+	const vetoes = [];
+	if (!hasDuplicateWorthyStructure(candidate)) vetoes.push(VETO.Small);
+	if (astVetoes(candidate, signals[SIGNAL.Ast].score)) vetoes.push(VETO.Ast);
+	if (findLookupVetoes(candidate, signals[SIGNAL.Ast].score)) vetoes.push(VETO.FindLookup);
+	if (templateVetoes(candidate, signals[SIGNAL.Ast].score)) vetoes.push(VETO.Template);
+	if (returnRoleVetoes(signals, confidence)) vetoes.push(VETO.ReturnRole);
+	if (shortBodyNeedsHigherBar(candidate, confidence, thresholds)) vetoes.push(VETO.ShortBody);
+	if (noSharedInterface(candidate, signals)) vetoes.push(VETO.NoInterface);
+	if (partAstFloorVetoes(candidate, signals[SIGNAL.Ast].score)) vetoes.push(VETO.PartAstFloor);
+	const canDuplicate = vetoes.every((v) => !DUPLICATE_VETOES.has(v));
+	if (confidence >= thresholds[TIER.Duplicate] && canDuplicate) {
 		isDuplicate = true;
-		tier = "duplicate";
-	} else if (confidence >= thresholds.similar && !noSharedInterface(candidate, signals) && !partAstFloorVetoes(candidate, signals.ast.score)) {
-		tier = "similar";
+		tier = TIER.Duplicate;
+	} else if (confidence >= thresholds[TIER.Similar] && SIMILAR_GATES.every((gate) => !vetoes.includes(gate))) {
+		tier = TIER.Similar;
 	}
 
+	// The reason string is rendered by the shared code vocabulary, so the ESLint
+	// message, the markdown report and the HTML page print the SAME words for the
+	// same number.
 	const parts = GROUPS.map((key) => `${key} ${signals[key].score.toFixed(2)}`);
-	const reason = `confidence ${confidence.toFixed(2)} (${parts.join(", ")})`;
+	const reason = render(CODE.Confidence, { confidence: confidence.toFixed(2), signals: parts.join(", ") });
 
 	return {
 		isDuplicate,
@@ -230,6 +250,7 @@ const decide = (candidate, canon, ctx) => {
 		signals,
 		thresholds,
 		weights,
+		vetoes,
 	};
 };
 
@@ -269,23 +290,6 @@ const bestOf = (matches) =>
 // The maximum is 95 — a status guard never reaches a suspiciously round 100.
 // Thresholds: ≥ 70 → Trash; 40–69 → Suspicious; < 40 → normal.
 // ---------------------------------------------------------------------------
-
-const TRASH_THRESHOLD = 70;
-const SUSPICIOUS_THRESHOLD = 40;
-
-const MAX_TRASH_DEPTH = 4;
-const MAX_TRASH_NODES = 12;
-
-const PREDICATE_NAME_RE = /^(is|has|can|should)[A-Z]/;
-const STATUS_FIELDS = new Set(["status", "state", "type", "kind"]);
-
-const COMPARISON_OPS = new Set(["EqualsEqualsEqualsToken", "ExclamationEqualsEqualsToken", "EqualsEqualsToken", "ExclamationEqualsToken"]);
-const LOGICAL_OPS = new Set(["BarBarToken", "AmpersandAmpersandToken"]);
-
-// The ONLY operators a trash body may contain. Anything else (InstanceOfToken,
-// InToken, arithmetic…) means the "one-liner" is doing real work — a type
-// guard like `err instanceof Error && err.code === 404` carries value.
-const TRASH_OPS = new Set([...COMPARISON_OPS, ...LOGICAL_OPS]);
 
 const treeDepth = (node) => (node ? 1 + (node.children || []).reduce((m, c) => Math.max(m, treeDepth(c)), 0) : 0);
 
@@ -389,7 +393,105 @@ const isAnonymous = (candidate) => String((candidate && candidate.name) || "").i
 
 const isTrash = (candidate) => !isAnonymous(candidate) && trashScore(candidate) >= TRASH_THRESHOLD;
 
+
+// ---------------------------------------------------------------------------
+// The READER's copy of the verdict — still the same decision-maker.
+//
+// `decide()` above produces the numbers; `explain()` turns them into something a
+// person can argue with: one row per comparison group with its score, weight,
+// share of the final number and the raw evidence behind it, then one sentence per
+// gate that fired. The HTML page and the markdown report both read THIS object,
+// and the sentences come from the shared code vocabulary — so the number and its
+// explanation can never disagree.
+//
+// There is deliberately ONE decision-maker: a second copy under `report/` drifted
+// the moment the thresholds changed.
+// ---------------------------------------------------------------------------
+
+const { SIGNALS } = require("./report/errorTypes/vocabulary/labels");
+const { KIND } = require("./constants");
+const { PHRASES, fill } = require("./report/errorTypes/vocabulary/phrases");
+const { render } = require("./report/errorTypes/codes");
+const { num, pct, showValue } = require("./report/errorTypes/vocabulary/format");
+const { labelOfEvidence } = require("./report/errorTypes/vocabulary/evidence");
+const { gatePhrase } = require("./report/errorTypes/vocabulary/gates");
+
+const chips = (evidence) =>
+	Object.entries(evidence ?? {})
+		.filter(([, value]) => value !== undefined && value !== null)
+		.map(([key, value]) => ({ key, label: labelOfEvidence(key), value: showValue(value) }));
+
+// One explanation per pair. `decision` is what `decide()` returned; `nodes` is
+// the local function's node count when the caller has it (the small-body veto
+// quotes it).
+const explain = (decision, { nodes = null } = {}) => {
+	const totalWeight = SIGNALS.reduce((sum, s) => sum + (decision.weights?.[s.key] ?? 0), 0) || 1;
+	const rows = SIGNALS.map((signal) => {
+		const score = decision.signals?.[signal.key]?.score ?? 0;
+		const weight = decision.weights?.[signal.key] ?? 0;
+		return {
+			key: signal.key,
+			label: signal.label,
+			short: signal.short,
+			color: signal.color,
+			what: signal.what,
+			score,
+			weight,
+			// The share of the final verdict this group produced — the number
+			// that answers "what made it 0.87?".
+			contribution: (weight * score) / totalWeight,
+			applied: weight > 0,
+			evidence: chips(decision.signals?.[signal.key]?.evidence),
+		};
+	});
+
+	// The gates quote the score that failed them; the small-body gate quotes the
+	// node count when the caller knows it.
+	const gateContext = {
+		ast: decision.signals?.[SIGNAL.Ast]?.score ?? 0,
+		signature: decision.signals?.[SIGNAL.Signature]?.score ?? 0,
+		nodes,
+	};
+	const why = [];
+	for (const row of [...rows].sort((a, b) => b.contribution - a.contribution)) {
+		if (!row.applied) {
+			why.push({ tone: TONE.Off, signal: row.key, text: fill(PHRASES.signalOff, { label: row.label }) });
+			continue;
+		}
+		const template = row.score >= 0.6 ? PHRASES.signal : PHRASES.signalDisagrees;
+		why.push({
+			tone: row.score >= 0.6 ? TONE.Agree : TONE.Disagree,
+			signal: row.key,
+			text: fill(template, { label: row.label, score: num(row.score), weight: pct(row.weight), what: row.what }),
+		});
+	}
+	for (const veto of decision.vetoes ?? []) {
+		const text = gatePhrase(veto, gateContext);
+		if (!text) continue;
+		why.push({ tone: TONE.Veto, signal: SIGNAL.Ast, text });
+	}
+
+	return {
+		confidence: decision.confidence ?? 0,
+		tier: decision.tier,
+		verdict: decision.isDuplicate ? KIND.Duplicate : decision.tier === TIER.Similar ? KIND.Similar : "none",
+		thresholds: decision.thresholds ?? {},
+		weights: decision.weights ?? {},
+		vetoes: decision.vetoes ?? [],
+		signals: rows,
+		why,
+		// The one-line version, for a badge or a table cell: the number and the
+		// group that produced most of it.
+		headline: (() => {
+			const top = [...rows].sort((a, b) => b.contribution - a.contribution)[0];
+			return fill(PHRASES.headline, { confidence: num(decision.confidence), top: top ? top.label : "—", share: pct(top ? top.contribution : 0) });
+		})(),
+	};
+};
+
+
 module.exports = {
+	explain,
 	decide,
 	bestOf,
 	resolveWeights,

@@ -1,18 +1,25 @@
 "use strict";
 
+const { CODE, FILTER } = require("../constants");
+
 // If the candidate already calls the canonical function (or vice versa), the
 // relationship is composition, not duplication — the candidate is reusing the
 // canonical, which is the desired outcome.
+//
+// The filter states a CODE, not a sentence: the wording lives in
+// `report/errorTypes/codes`, so the terminal report, the page and any future
+// consumer say the same thing about the same dismissal.
 const test = (match) => {
 	const appCalls = new Set(match.app.calls || []);
 	const canonCalls = new Set(match.canon.calls || []);
 	if (appCalls.has(match.canon.name)) {
-		return `${match.app.name} calls ${match.canon.name} (composition, not a duplicate)`;
+		return { code: CODE.Composition, params: { local: match.app.name, other: match.canon.name } };
 	}
 	if (canonCalls.has(match.app.name)) {
-		return `${match.canon.name} calls ${match.app.name} (composition, not a duplicate)`;
+		return { code: CODE.CompositionReverse, params: { local: match.app.name, other: match.canon.name } };
 	}
+
 	return null;
 };
 
-module.exports = { name: "drop-usages", test };
+module.exports = { name: FILTER.DropUsages, test };

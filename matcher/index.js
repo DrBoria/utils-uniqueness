@@ -16,18 +16,22 @@ const restrictTo = (candidate, canon) => {
 	return {
 		...canon,
 		calls: sharedCalls,
-		sideEffectKeys: canon.sideEffectKeys.filter((k) => candidate.sideEffectKeys.includes(k)),
+		sharedSideEffects: canon.sideEffects.filter((effect) => candidate.sideEffects.some((own) => own.key === effect.key)),
 	};
 };
 
-const matchSignals = (candidate, canon) => {
+const matchSignals = (candidate, canon, opts) => {
 	const target = restrictTo(candidate, canon);
+	// WHICH WEIGHT ONE MATCH IS WORTH is the engine's default (`RELIABILITY`), and the
+	// owner can set any of them from the ESLint config: `weights.evidence: { type: 0.3 }`.
+	// Passed down as an OVERRIDE MAP, so a matcher never reaches for configuration.
+	const reliability = opts?.reliability ?? {};
 
 	return {
-		signature: matchSignature(candidate, target),
-		structure: matchStructure(candidate, target),
-		ast: matchAst(candidate, target),
-		controlFlow: matchControlFlow(candidate, target),
+		signature: matchSignature(candidate, target, reliability),
+		structure: matchStructure(candidate, target, reliability),
+		ast: matchAst(candidate, target, reliability),
+		controlFlow: matchControlFlow(candidate, target, reliability),
 	};
 };
 

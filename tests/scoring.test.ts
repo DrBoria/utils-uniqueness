@@ -65,12 +65,12 @@ describe("trivial functions are not flagged as duplicates", () => {
 	// and were scored 0.82 "duplicate".
 	const trivialPair = () => {
 		const app = mk({
-			nodeCount: 6,
+			nodes: 6,
 			tree: { kind: "return", children: [] },
 			signature: buildSignature({ name: "optStr", params: [{ name: "v", type: "string|null|undefined" }], returnType: "string|undefined" }),
 		});
 		const canon = mk({
-			nodeCount: 20,
+			nodes: 20,
 			tree: { kind: "call", children: [] },
 			signature: buildSignature({ name: "initialsOf", params: [{ name: "name", type: "string|undefined" }], returnType: "string|undefined" }),
 		});
@@ -100,8 +100,8 @@ describe("AST veto — a real body that does not look alike is not a duplicate",
 	const ctx = { weights: { signature: 0.3, structure: 0.3, ast: 0.2, controlFlow: 0.2 }, thresholds: { duplicate: 0.7, similar: 0.5 } };
 
 	it("a substantive candidate with a low AST score is not a duplicate", () => {
-		const app = mk({ nodeCount: 40, tree: { kind: "block", children: [] } });
-		const canon = mk({ nodeCount: 40, tree: { kind: "block", children: [] } });
+		const app = mk({ nodes: 40, tree: { kind: "block", children: [] } });
+		const canon = mk({ nodes: 40, tree: { kind: "block", children: [] } });
 		const signals = {
 			signature: { score: 0.95, evidence: {} },
 			structure: { score: 0.83, evidence: {} },
@@ -117,8 +117,8 @@ describe("AST veto — a real body that does not look alike is not a duplicate",
 	});
 
 	it("a substantive candidate with a high AST score stays a duplicate", () => {
-		const app = mk({ nodeCount: 40, tree: { kind: "block", children: [] } });
-		const canon = mk({ nodeCount: 40, tree: { kind: "block", children: [] } });
+		const app = mk({ nodes: 40, tree: { kind: "block", children: [] } });
+		const canon = mk({ nodes: 40, tree: { kind: "block", children: [] } });
 		const signals = {
 			signature: { score: 0.95, evidence: {} },
 			structure: { score: 0.83, evidence: {} },
@@ -138,8 +138,8 @@ describe("similar-tier floor — the weak tail is not reported", () => {
 	// while leaving the 0.60+ rows (and every verified true duplicate, which
 	// lives in the 0.7+ duplicate tier) untouched.
 	const weakPair = () => {
-		const app = mk({ nodeCount: 20, tree: { kind: "block", children: [] } });
-		const canon = mk({ nodeCount: 20, tree: { kind: "block", children: [] } });
+		const app = mk({ nodes: 20, tree: { kind: "block", children: [] } });
+		const canon = mk({ nodes: 20, tree: { kind: "block", children: [] } });
 		// 0.8*0.3 + 0.5*0.3 + 0.4*0.2 + 0.4*0.2 = 0.55 — above the old 0.5 floor,
 		// below the new 0.6 floor.
 		const signals = {
@@ -187,14 +187,14 @@ describe("partial (part) candidates — signature weight must not be zeroed", ()
 	// the signature weight at 0.3 so the ~0 score penalizes confidence.
 
 	const partialMk = (over: Record<string, unknown> = {}) =>
-		mk({ partial: true, nodeCount: 10, tree: { kind: "block", children: [] }, ...over });
+		mk({ partial: true, nodes: 10, tree: { kind: "block", children: [] }, ...over });
 
 	it("a structure-only match (low ast) does NOT reach the similar tier", () => {
 		// Mirrors the real false positive: `clampPage` block (structure 0.87,
 		// ast 0.31, cf 0.89, sig 0.00). Old: 0.501/0.7 = 0.72 → "similar".
 		// New: 0.501/1.0 = 0.50 → below 0.6 floor.
 		const app = partialMk();
-		const canon = mk({ nodeCount: 10, tree: { kind: "block", children: [] } });
+		const canon = mk({ nodes: 10, tree: { kind: "block", children: [] } });
 		const signals = {
 			signature: { score: 0.0, evidence: {} },
 			structure: { score: 0.87, evidence: {} },
@@ -211,7 +211,7 @@ describe("partial (part) candidates — signature weight must not be zeroed", ()
 		// body (structure ~1.0, ast ~1.0, cf ~1.0, sig 0.00).
 		// New: 0.7/1.0 = 0.70 → above 0.6 floor.
 		const app = partialMk();
-		const canon = mk({ nodeCount: 10, tree: { kind: "block", children: [] } });
+		const canon = mk({ nodes: 10, tree: { kind: "block", children: [] } });
 		const signals = {
 			signature: { score: 0.0, evidence: {} },
 			structure: { score: 1.0, evidence: {} },
@@ -234,7 +234,7 @@ describe("partial (part) candidates — signature weight must not be zeroed", ()
 		// A part is only reported when the body actually looks like the canon's
 		// body (high AST).
 		const app = partialMk();
-		const canon = mk({ nodeCount: 10, tree: { kind: "block", children: [] } });
+		const canon = mk({ nodes: 10, tree: { kind: "block", children: [] } });
 		const signals = {
 			signature: { score: 0.95, evidence: {} },
 			structure: { score: 0.7, evidence: {} },

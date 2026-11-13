@@ -105,8 +105,8 @@ describe("knownDuplicates", () => {
 		const findings = findingsFor(project, "packages/a/one.ts");
 
 		expect(findings).toHaveLength(1);
-		expect(findings[0].messageId).toBe("duplicateUtil");
-		expect(findings[0].data.name).toBe("dupUtil");
+		expect(findings[0].message).toContain("`dupUtil`");
+		expect(findings[0].message).toContain("repeats the canonical");
 	});
 
 	it("silences the declared pair, in both directions", () => {

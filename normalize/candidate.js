@@ -1,9 +1,23 @@
 "use strict";
 
 const { buildSignature } = require("./signature.js");
-const { normalizeTree, sideEffectFingerprint, sideEffectKeys, nodeCount, hasStructure, callBag } = require("./tree.js");
+const tree_ = require("./tree.js");
 const { buildControlFlow } = require("./control-flow.js");
 const { buildAst } = require("./ast.js");
+
+// One site per (name, line, column): the declaration half comes from the raw
+// descriptor and the body half from the tree, and the two overlap by design —
+// a `const` in the body is in both. A name written once must not be counted
+// twice, or the name bag stops describing the code.
+const uniqueSites = (sites) => {
+	const seen = new Set();
+	return sites.filter((site) => {
+		const key = `${site.name}\u0000${site.line}\u0000${site.column}`;
+		if (seen.has(key)) return false;
+		seen.add(key);
+		return true;
+	});
+};
 
 // ---------------------------------------------------------------------------
 // buildCandidate(descriptor, config)
@@ -15,25 +29,28 @@ const { buildAst } = require("./ast.js");
 // ---------------------------------------------------------------------------
 
 const buildCandidate = (descriptor, config) => {
-	const signature = buildSignature(descriptor);
-	const tree = normalizeTree(descriptor.bodyTree);
-	const sideEffects = sideEffectFingerprint(descriptor.bodyTree, descriptor.flags);
-	const controlFlow = buildControlFlow(descriptor);
-	const ast = buildAst(descriptor);
-	const calls = [...callBag(descriptor.bodyTree).keys()];
+	const body = descriptor.bodyTree;
 
 	return {
 		...descriptor,
 		partial: !!descriptor.partial,
-		signature,
-		tree,
-		sideEffects,
-		sideEffectKeys: sideEffectKeys(sideEffects),
-		controlFlow,
-		ast,
-		calls,
-		nodeCount: nodeCount(descriptor.bodyTree),
-		hasStructure: hasStructure(descriptor.bodyTree),
+		// The four normalized views the matchers read.
+		signature: buildSignature(descriptor),
+		tree: tree_.normalizeTree(body),
+		controlFlow: buildControlFlow(descriptor),
+		ast: buildAst(descriptor),
+		// The structural answers — one value each, never a pair of halves:
+		//   names        every name the function DECLARES, with line and column
+		//                (its own name, its parameters, its body's declarations)
+		//   sideEffects  what it does to the world, with the sentence per effect
+		//   calls        the call targets it names
+		//   nodes        how big it is
+		//   structure    whether the shape is worth comparing, and on what evidence
+		names: uniqueSites([...(descriptor.declaredSites ?? []), ...tree_.names(body)]),
+		sideEffects: tree_.sideEffects(body, descriptor.flags),
+		calls: tree_.callTargets(body),
+		nodes: tree_.nodes(body),
+		structure: tree_.structure(body),
 	};
 };
 

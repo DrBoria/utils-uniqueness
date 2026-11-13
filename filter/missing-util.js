@@ -1,10 +1,11 @@
 "use strict";
 
+const { TIER, DEFAULT_MIN_CLUSTER, MIN_PAIR_FLOOR, CANON_CONF_FLOOR } = require("../constants");
+
 const { pascalWords } = require("../normalize/words.js");
 const { matchStructure } = require("../matcher/structure.js");
 const { matchAst } = require("../matcher/ast.js");
 
-const DEFAULT_MIN_CLUSTER = 3;
 // Two functions are "mutually similar" (and thus evidence of a missing shared
 // util) only when the composite of structure AND AST is high. Structure alone
 // is too coarse — a `.map` vs a `.reduce` both produce a call+literal+ref bag
@@ -19,8 +20,6 @@ const DEFAULT_MIN_CLUSTER = 3;
 // FHIR reference builder, a seed-id builder, and the Snowflake F/E/R
 // table-name builders, whose cross-operation pair similarity ran 0.47-0.86
 // because for template one-liners the AST sequence sub-score saturates.
-const MIN_PAIR_FLOOR = 0.9;
-const CANON_CONF_FLOOR = 0.4;
 
 // Composite of the two body-shape signals. Both candidates carry a normalized
 // tree + ast (they are full candidates), so this is cheap to compute pairwise.
@@ -81,7 +80,7 @@ const resolveClusterMembers = (group) => {
 	if (apps.length >= 2 && pairwiseAllAbove(apps, MIN_PAIR_FLOOR) && canonResemblesMembers(strong[0].canon, apps, MIN_PAIR_FLOOR)) {
 		return strong;
 	}
-	const dups = strong.filter((m) => m.decision.tier === "duplicate");
+	const dups = strong.filter((m) => m.decision.tier === TIER.Duplicate);
 	const dupApps = [...new Map(dups.map((m) => [m.app.name, m.app])).values()];
 	if (dups.length >= 2 && pairwiseAllAbove(dupApps, MIN_PAIR_FLOOR) && canonResemblesMembers(dups[0].canon, dupApps, MIN_PAIR_FLOOR)) {
 		return dups;
@@ -97,7 +96,7 @@ const findMissingUtils = (matches, { minCluster = DEFAULT_MIN_CLUSTER } = {}) =>
 	// util is not missing, and consuming that match into a cluster would make
 	// the genuine duplicate vanish from the report. Cluster only similar-tier
 	// matches; duplicates stay in `remaining`.
-	const clusterable = matches.filter((m) => m.decision.tier !== "duplicate");
+	const clusterable = matches.filter((m) => m.decision.tier !== TIER.Duplicate);
 	const byCanon = new Map();
 	for (const match of clusterable) {
 		const key = match.canon.name;

@@ -1,6 +1,7 @@
 "use strict";
 
 const { pascalWords } = require("../normalize/words.js");
+const { DEFAULT_PAIR_FLOOR, MIN_APP_CLUSTER, AST_COPY_FLOOR, MIN_COPY_PARAMS } = require("../constants");
 
 // The app↔app mode surfaces functions that are near-identical copies of *each
 // other*, with no canonical anchor — the cross-file duplication the canonical
@@ -15,8 +16,7 @@ const { pascalWords } = require("../normalize/words.js");
 // same mutual-similarity discipline missing-util.js applies, but with no
 // canonical to anchor on.
 
-const DEFAULT_PAIR_FLOOR = 0.6;
-const MIN_APP_CLUSTER = 2;
+
 
 // A "copy" is a stronger claim than a "similar" match. Two functions are a
 // mutual copy only when their bodies share near-identical subtree structure
@@ -28,8 +28,7 @@ const MIN_APP_CLUSTER = 2;
 // repeated *pattern*, not a copy worth extracting (48 of them clustered at
 // conf 1.0). Both gates are necessary: AST alone still surfaces the factory
 // cluster, and params alone still surfaces the coarse-shape noise.
-const AST_COPY_FLOOR = 0.9;
-const MIN_COPY_PARAMS = 1;
+
 
 // The policy applies to *measured* pairs (the real matcher always emits
 // signals). Confidence-only pairs — used to unit-test the clique/floor

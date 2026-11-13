@@ -112,7 +112,7 @@ describe("findMissingUtils — clustering must require mutual similarity", () =>
 			`export const date = () => { throw new Error("use day instead"); };`,
 			["date"],
 		);
-		expect(stub.nodeCount).toBeLessThan(6);
+		expect(stub.nodes).toBeLessThan(6);
 
 		const matches = apps.map((app) => mkMatch(app, stub, 0.53, "similar"));
 		const { clusters } = findMissingUtils(matches, { minCluster: 3 });

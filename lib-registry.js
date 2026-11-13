@@ -22,9 +22,11 @@ const os = require("node:os");
 const path = require("node:path");
 const crypto = require("node:crypto");
 
-const MAX_LIBS = 80;
-const MAX_EXPORTS_PER_LIB = 2000;
-const BUDGET_MS = 30000;
+const { warn } = require("./report/output");
+const { MAX_LIBS, MAX_EXPORTS_PER_LIB, BUDGET_MS, CODE } = require("./constants");
+const { render } = require("./report/errorTypes/codes");
+
+
 
 const hash = (s) => crypto.createHash("md5").update(s).digest("hex");
 
@@ -236,7 +238,8 @@ const buildLibRegistry = (root) => {
 		({ Project } = require("ts-morph"));
 		ts = require("typescript");
 	} catch (err) {
-		console.warn(`[lib-registry] ts-morph/typescript unavailable: ${err && err.message ? err.message : err}`);
+		warn(render(CODE.LibRegistryUnavailable, { reason: err && err.message ? err.message : err }));
+
 		return new Map(Object.entries(libs));
 	}
 	const project = new Project({ skipAddingFilesFromTsConfig: true });
@@ -272,7 +275,7 @@ const buildLibRegistry = (root) => {
 		// memory, the next lint simply rebuilds it.
 	}
 
-	if (budgetHit) console.warn("[lib-registry] budget exhausted, remaining libs will be parsed on the next lint");
+	if (budgetHit) warn(render(CODE.LibRegistryBudget));
 	return new Map(Object.entries(libs));
 };
 

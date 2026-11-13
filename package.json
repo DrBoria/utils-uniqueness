@@ -1,74 +1,84 @@
 {
-  "name": "@md-code/utils-uniqueness",
-  "version": "0.1.2",
-  "description": "ESLint rule and CLI that find duplicate utility functions by comparing signature, structure, AST and control flow against a canonical utils folder.",
-  "license": "Apache-2.0",
-  "author": "DrBoria <dr.boria@gmail.com>",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/DrBoria/utils-uniqueness.git"
-  },
-  "bugs": {
-    "url": "https://github.com/DrBoria/utils-uniqueness/issues"
-  },
-  "homepage": "https://github.com/DrBoria/utils-uniqueness#readme",
-  "keywords": [
-    "eslint",
-    "eslintplugin",
-    "eslint-plugin",
-    "duplicate-functions",
-    "code-duplication",
-    "design-system",
-    "typescript"
-  ],
-  "engines": {
-    "node": ">=18"
-  },
-  "main": "index.js",
-  "bin": {
-    "md-code-utils-uniqueness": "bin/utils-uniqueness.js"
-  },
-  "files": [
-    "index.js",
-    "plugin.js",
-    "config.js",
-    "main.js",
-    "logger.js",
-    "utils.js",
-    "decision-maker.js",
-    "report.js",
-    "normalize/",
-    "matcher/",
-    "filter/",
-    "playgrounds/",
-    "bin/",
-    "README.md",
-    "self-catalog.js",
-    "lib-registry.js"
-  ],
-  "exports": {
-    ".": "./index.js",
-    "./plugin": "./index.js",
-    "./config": "./config.js",
-    "./report": "./report.js",
-    "./package.json": "./package.json"
-  },
-  "dependencies": {
-    "minimatch": "^9.0.4",
-    "remeda": "^2.50.0",
-    "ts-morph": "^24.0.0"
-  },
-  "scripts": {
-    "gen:catalog": "node main.js",
-    "test": "vitest run"
-  },
-  "peerDependencies": {
-    "eslint": ">=8.40.0"
-  },
-  "devDependencies": {
-    "vitest": "^4.1.0"
-  },
-  "publishConfig": {
-    "access": "public"
-  }
+	"name": "@md-code/utils-uniqueness",
+	"version": "0.1.2",
+	"description": "ESLint rule and CLI that find duplicate utility functions by comparing signature, structure, AST and control flow against a canonical utils folder.",
+	"license": "Apache-2.0",
+	"author": "DrBoria <dr.boria@gmail.com>",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/DrBoria/utils-uniqueness.git"
+	},
+	"bugs": {
+		"url": "https://github.com/DrBoria/utils-uniqueness/issues"
+	},
+	"homepage": "https://github.com/DrBoria/utils-uniqueness#readme",
+	"keywords": [
+		"eslint",
+		"eslintplugin",
+		"eslint-plugin",
+		"duplicate-functions",
+		"code-duplication",
+		"design-system",
+		"typescript"
+	],
+	"engines": {
+		"node": ">=18"
+	},
+	"main": "index.js",
+	"bin": {
+		"md-code-utils-uniqueness": "bin/utils-uniqueness.js"
+	},
+	"files": [
+		"index.js",
+		"plugin.js",
+		"config.js",
+		"main.js",
+		"logger.js",
+		"utils.js",
+		"decision-maker.js",
+		"report.js",
+		"normalize/",
+		"matcher/",
+		"filter/",
+		"playgrounds/",
+		"bin/",
+		"README.md",
+		"self-catalog.js",
+		"lib-registry.js",
+		"report/"
+	],
+	"exports": {
+		".": "./index.js",
+		"./plugin": "./index.js",
+		"./config": "./config.js",
+		"./report": "./report.js",
+		"./package.json": "./package.json"
+	},
+	"dependencies": {
+		"esbuild": "^0.28.2",
+		"minimatch": "^9.0.4",
+		"react": "^19.3.1",
+		"react-dom": "^19.3.1",
+		"remeda": "^2.50.0",
+		"styled-components": "^6.6.0",
+		"ts-morph": "^24.0.0",
+		"@md-code/code-diff": "file:../code-diff"
+	},
+	"scripts": {
+		"gen:catalog": "node main.js",
+		"test": "vitest run",
+		"overview": "node main.js --overview",
+		"report": "node main.js --report"
+	},
+	"peerDependencies": {
+		"eslint": ">=8.40.0"
+	},
+	"devDependencies": {
+		"prismjs": "^1.30.0",
+		"typescript": "^5.6.3",
+		"vitest": "^4.1.0"
+	},
+	"publishConfig": {
+		"access": "public"
+	}
 }

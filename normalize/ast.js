@@ -12,11 +12,16 @@ const { normalizeTree } = require("./tree.js");
 
 const hashSubtrees = (tree, set = new Map()) => {
 	if (!tree) return { hash: "", set };
+	// The multiset is accumulated in ONE map shared by the whole walk: every
+	// recursive call already recorded itself and its children into it. Re-adding
+	// a child's counts on the way up (as this used to) multiplied them at every
+	// level — a 21-node body reported 640 shared subtrees and a union of 1.1e9,
+	// which silently distorted the Jaccard score for every pair.
 	const kids = (tree.children || []).map((c) => hashSubtrees(c, set));
 	const key = `${tree.kind}:${tree.label}[${kids.map((k) => k.hash).join(",")}]`;
 	const hash = simpleHash(key);
 	set.set(hash, (set.get(hash) || 0) + 1);
-	for (const k of kids) for (const [h, n] of k.set) set.set(h, (set.get(h) || 0) + n);
+
 	return { hash, set };
 };
 

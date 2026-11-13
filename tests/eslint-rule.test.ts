@@ -74,9 +74,11 @@ describe("ESLint rule (createRule) — the path no CLI test covers", () => {
 		const messages = runRule("utils-uniqueness/tests/duplicates/numberDups.ts", baseOptions());
 
 		expect(messages.length).toBeGreaterThan(0);
-		const money = messages.find((m) => m.data && m.data.name === "money" && m.data.canonName === "formatMoney");
+		const money = messages.find((m) => m.message.includes("`money`") && m.message.includes("`formatMoney`"));
 		expect(money).toBeDefined();
-		expect(money.messageId).toBe("duplicateUtil");
+		// The editor prints the SAME sentence the terminal report and the HTML page
+		// print for the same pair — it is rendered from the shared code table.
+		expect(money.message).toContain("repeats the canonical");
 	});
 
 	it("flags a NON-exported function that is an exact copy of a canonical", () => {
@@ -86,10 +88,10 @@ describe("ESLint rule (createRule) — the path no CLI test covers", () => {
 		// non-exported copy MUST be flagged, and `tag` must stay silent.
 		const messages = runRule("utils-uniqueness/tests/duplicates/nonExportedDups.ts", baseOptions());
 
-		const hidden = messages.find((m) => m.data && m.data.name === "hiddenMoney" && m.data.canonName === "formatMoney");
+		const hidden = messages.find((m) => m.message.includes("`hiddenMoney`") && m.message.includes("`formatMoney`"));
 		expect(hidden).toBeDefined();
-		expect(hidden.messageId).toBe("duplicateUtil");
-		expect(messages.find((m) => m.data && m.data.name === "tag")).toBeUndefined();
+		expect(hidden.message).toContain("repeats the canonical");
+		expect(messages.find((m) => m.message.includes("`tag`"))).toBeUndefined();
 	});
 
 	it("flags a NESTED function (function inside a function) that copies a canonical", () => {
@@ -97,9 +99,9 @@ describe("ESLint rule (createRule) — the path no CLI test covers", () => {
 		// body — a byte-for-byte copy of formatMoney. The rule must see it.
 		const messages = runRule("utils-uniqueness/tests/duplicates/nestedAnonDups.ts", baseOptions());
 
-		const nested = messages.find((m) => m.data && m.data.name === "formatOne" && m.data.canonName === "formatMoney");
+		const nested = messages.find((m) => m.message.includes("`formatOne`") && m.message.includes("`formatMoney`"));
 		expect(nested).toBeDefined();
-		expect(nested.messageId).toBe("duplicateUtil");
+		expect(nested.message).toContain("repeats the canonical");
 	});
 
 	it("flags an ANONYMOUS .map() callback that copies a canonical", () => {
@@ -109,7 +111,7 @@ describe("ESLint rule (createRule) — the path no CLI test covers", () => {
 		// everything else (structure, not name).
 		const messages = runRule("utils-uniqueness/tests/duplicates/nestedAnonDups.ts", baseOptions());
 
-		const anon = messages.find((m) => m.messageId === "duplicateUtil" && m.data && m.data.canonName === "formatMoney" && /#anon@/.test(m.data.name));
+		const anon = messages.find((m) => m.message.includes("`formatMoney`") && /#anon@/.test(m.message));
 		expect(anon).toBeDefined();
 	});
 
@@ -120,9 +122,8 @@ describe("ESLint rule (createRule) — the path no CLI test covers", () => {
 		// of the canonical.
 		const messages = runRule("utils-uniqueness/tests/duplicates/nestedAnonDups.ts", baseOptions({ parts: true }));
 
-		const part = messages.find((m) => m.messageId === "partOfUtil" && m.data && m.data.util === "formatMoney");
+		const part = messages.find((m) => m.message.includes("repeats") && m.message.includes("`formatMoney`") && m.message.includes("block inside"));
 		expect(part).toBeDefined();
-		expect(part.data.owner).toBeTruthy();
 	});
 
 	it("is silent when the catalog is missing (rule degrades off, not an error)", () => {

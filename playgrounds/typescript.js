@@ -94,6 +94,17 @@ const collectFunctionNodes = (sourceFile) => {
 	return out;
 };
 
+// The NODE that writes the callable's name. A `function foo` has one; an arrow
+// passed as an object value takes its name from the property. This is the node
+// the reported `name` came from, so its position is the name's position.
+const nameNodeFor = (node) => {
+	if (typeof node.getNameNode === "function" && node.getNameNode()) return node.getNameNode();
+	const parent = node.getParent();
+	if (parent && (parent.isKind(ts.SyntaxKind.VariableDeclaration) || parent.isKind(ts.SyntaxKind.PropertyAssignment))) return parent.getNameNode ? parent.getNameNode() : null;
+
+	return null;
+};
+
 const functionName = (node, sourceFile) => {
 	if (node.getName && node.getName()) return node.getName();
 	const parent = node.getParent();
@@ -184,7 +195,7 @@ const receiverOf = (call) => {
 	return null;
 };
 
-const toPlainTree = (node) => {
+const toPlainTreeInner = (node) => {
 	node = unwrap(node);
 	if (!node) return null;
 	const kids = (arr) => (arr || []).map((c) => toPlainTree(c)).filter(Boolean);
@@ -193,7 +204,7 @@ const toPlainTree = (node) => {
 		const receiver = receiverOf(node);
 		const receiverChild = receiver ? toPlainTree(receiver) : null;
 		const children = receiverChild ? [receiverChild, ...kids(node.getArguments())] : kids(node.getArguments());
-		return { kind: "call", label: calleeName(node), children };
+		return { kind: "call", label: calleeName(node), arity: typeof node.getArguments === "function" ? node.getArguments().length : 0, ...callSpan(node), children };
 	}
 	if (node.isKind(ts.SyntaxKind.NewExpression)) return { kind: "new", label: calleeName({ getExpression: () => node.getExpression() }), children: kids(node.getArguments()) };
 	if (node.isKind(ts.SyntaxKind.TaggedTemplateExpression)) return { kind: "call", label: calleeName({ getExpression: () => node.getTag() }), children: [{ kind: "template", label: "template", children: [] }] };
@@ -222,7 +233,7 @@ const toPlainTree = (node) => {
 	if (node.isKind(ts.SyntaxKind.BinaryExpression)) return { kind: "bin", label: opOf(node.getOperatorToken()), children: kids([node.getLeft(), node.getRight()]) };
 	if (node.isKind(ts.SyntaxKind.PrefixUnaryExpression)) return { kind: "unary", label: opOf(node.getOperatorToken()), children: kids([node.getOperand()]) };
 	if (node.isKind(ts.SyntaxKind.PostfixUnaryExpression)) return { kind: "unary-post", label: opOf(node.getOperatorToken()), children: kids([node.getOperand()]) };
-	if (node.isKind(ts.SyntaxKind.ConditionalExpression)) return { kind: "cond", label: "cond", children: kids([node.getCondition(), node.getWhenTrue(), node.getWhenFalse()]) };
+	if (node.isKind(ts.SyntaxKind.ConditionalExpression)) return { kind: "cond", label: "cond", column: tokenColumn(node.getQuestionToken()), columnEnd: tokenColumn(node.getQuestionToken()), children: kids([node.getCondition(), node.getWhenTrue(), node.getWhenFalse()]) };
 	if (node.isKind(ts.SyntaxKind.CommaExpression)) return { kind: "seq", label: "seq", children: kids(node.getOperands()) };
 	if (node.isKind(ts.SyntaxKind.SpreadElement)) return { kind: "spread", label: "spread", children: kids([node.getExpression()]) };
 	if (node.isKind(ts.SyntaxKind.ObjectLiteralExpression)) return { kind: "object", label: "object", children: kids(node.getProperties()) };
@@ -254,7 +265,10 @@ const toPlainTree = (node) => {
 		return { kind: "template", label: "template", children: parts.filter(Boolean) };
 	}
 	if (node.isKind(ts.SyntaxKind.NoSubstitutionTemplateLiteral)) return { kind: "template", label: "template", children: [templatePart(node)] };
-	if (node.isKind(ts.SyntaxKind.ArrowFunction) || node.isKind(ts.SyntaxKind.FunctionExpression)) return { kind: "func", label: "<fn>", children: node.getBody() ? kids([node.getBody()]) : [] };
+	if (node.isKind(ts.SyntaxKind.ArrowFunction) || node.isKind(ts.SyntaxKind.FunctionExpression)) {
+		// The DECLARATION form is the construct: `function` or `=>`.
+		return { kind: "func", label: "<fn>", ...funcSpan(node), children: node.getBody() ? kids([node.getBody()]) : [] };
+	}
 	if (node.isKind(ts.SyntaxKind.IfStatement)) {
 		return { kind: "if", label: "if", children: [toPlainTree(node.getExpression()), toPlainTree(node.getThenStatement()), node.getElseStatement() ? toPlainTree(node.getElseStatement()) : null].filter(Boolean) };
 	}
@@ -280,7 +294,51 @@ const toPlainTree = (node) => {
 		return { kind: "try", label: "try", children: [toPlainTree(node.getTryBlock()), node.getCatchClause() ? toPlainTree(node.getCatchClause()) : null, node.getFinallyBlock() ? toPlainTree(node.getFinallyBlock()) : null].filter(Boolean) };
 	}
 	if (node.isKind(ts.SyntaxKind.CatchClause)) return { kind: "catch", label: "catch", children: kids([node.getBlock()]) };
-	if (node.isKind(ts.SyntaxKind.VariableStatement)) return { kind: "var", label: "var", children: kids(node.getDeclarationList().getDeclarations()) };
+	// A destructuring declaration is NOT a plain one: `const { postMessage } = ctx`
+// binds by PATTERN, and the reader checks the braces, not the name. Its kind says
+// so, and its column points at the `{` — the same position the page paints.
+        if (node.isKind(ts.SyntaxKind.VariableStatement)) {
+                const declarations = node.getDeclarationList().getDeclarations();
+                const pattern = declarations.find((decl) => {
+                        const name = decl.getNameNode();
+
+                        return name && name.isKind(ts.SyntaxKind.ObjectBindingPattern, ts.SyntaxKind.ArrayBindingPattern);
+                });
+                if (pattern) {
+                        const name = pattern.getNameNode();
+                        const span = patternSpan(name);
+
+                        return {
+                                kind: "var-destr",
+                                label: "var-destr",
+                                column: span.column,
+                                columnEnd: span.columnEnd,
+                                // A pattern can open on one line and close on another; the closing
+                                // brace is still part of the construct, so its line travels too.
+                                endLine: name && typeof name.getEndLineNumber === "function" ? name.getEndLineNumber() : undefined,
+                                children: kids(declarations),
+                        };
+                }
+
+                // A plain declaration is marked on the NAME it binds (`requestId`), and the
+                // name travels with the node: two declarations are the same declaration only
+                // when they bind the same name.
+                // The CONSTRUCT is the `const` keyword: that is what a reader checks in
+                // the structure tab. The bound NAME is data for pairing, not a mark.
+                // The KEYWORD is kept as its own fact: `const`, `let` and `var` are three
+                // different declarations, and control flow must not treat them as one step.
+                const keyword = node.getDeclarationList().getChildren()[0] ?? null;
+
+                return {
+                        kind: "var",
+                        label: "var",
+                        name: declarations.map((decl) => decl.getName()).join(","),
+                        keyword: keyword && typeof keyword.getText === "function" ? keyword.getText() : undefined,
+                        column: tokenColumn(keyword),
+                        columnEnd: keyword && typeof keyword.getEnd === "function" ? columnAt(node.getSourceFile(), keyword.getEnd()) - 1 : undefined,
+                        children: kids(declarations),
+                };
+        }
 	if (node.isKind(ts.SyntaxKind.VariableDeclaration)) return { kind: "var-decl", label: node.getName() || "?", children: node.getInitializer() ? kids([node.getInitializer()]) : [] };
 	if (node.isKind(ts.SyntaxKind.AssignmentExpression)) return { kind: "assign", label: assignTarget(node.getLeft()), children: kids([node.getRight()]) };
 	if (node.isKind(ts.SyntaxKind.Block)) return { kind: "block", label: "block", children: kids(node.getStatements()) };
@@ -305,6 +363,10 @@ const toPlainTree = (node) => {
 const opOf = (token) => {
 	if (!token) return "?";
 	if (typeof token === "string") return token;
+	// The OPERATOR ITSELF (`&&`, `!==`, `instanceof`). The syntax-kind name
+	// (`BarBarToken`, `54`) is a different operator for every spelling of the same
+	// token, so equivalent code compared unequal.
+	if (typeof token.getText === "function") return token.getText();
 	if (token.isKind) return ts.SyntaxKind[token.getKind()] || String(token);
 	return String(token);
 };
@@ -328,17 +390,16 @@ const assignTarget = (left) => {
 // signature keys; strip the import prefix so both contexts compare equal.
 const sanitizeTypeText = (text) => String(text || "").replace(/import\("[^"]*"\)\./g, "").replace(/import\("[^"]*"\)/g, "import");
 
-const paramInfo = (p) => {
-	const name = p.getName() || "?";
-	const type = p.getType() ? sanitizeTypeText(p.getType().getText()) : "";
-	return {
-		name,
-		type,
-		hasDefault: !!p.getInitializer(),
-		isRest: !!p.getDotDotDotToken(),
-		isOptional: p.isOptional ? p.isOptional() : false,
-	};
-};
+const paramInfo = (p) => ({
+	name: p.getName() || "?",
+	type: p.getType() ? sanitizeTypeText(p.getType().getText()) : "",
+	hasDefault: !!p.getInitializer(),
+	isRest: !!p.getDotDotDotToken(),
+	isOptional: p.isOptional ? p.isOptional() : false,
+	// Where the parameter is written. Without a position the page can only search
+	// for the word, and a word is not a declaration.
+	...siteOf(p),
+});
 
 // 1-based column of a character position (ts-morph v24 exposes line numbers
 // via getStartLineNumber/getEndLineNumber but not column).
@@ -347,6 +408,224 @@ const columnAt = (sourceFile, pos) => {
 	let i = pos - 1;
 	while (i >= 0 && text[i] !== "\n") i--;
 	return pos - i;
+};
+
+// WHERE a node is written: line and 1-based column. One helper, so a position is
+// never computed two slightly different ways.
+// The 1-based column of a TOKEN the parser already resolved (`?`, `=>`). Same
+// arithmetic as `siteOf`, for the few kinds whose interesting position is not the
+// node start.
+const tokenColumn = (token) => {
+	if (!token || typeof token.getStart !== "function") return undefined;
+
+	return columnAt(token.getSourceFile(), token.getStart());
+};
+
+// The span of a binding pattern on ONE line: where the `{` starts and where the
+// `}` ends. A mark paints the whole pattern, both braces included, because that is
+// the construct — the initializer is somebody else's node.
+const patternSpan = (pattern) => {
+        if (!pattern || typeof pattern.getStart !== "function") return { column: undefined, columnEnd: undefined };
+        const file = pattern.getSourceFile();
+
+        return {
+                column: columnAt(file, pattern.getStart()),
+                // The closing brace has a column whether or not it shares the line; that is
+                // `endLine`'s business, not a reason to drop it.
+                columnEnd: columnAt(file, pattern.getEnd()) - 1,
+        };
+};
+
+const siteOf = (node) => {
+	if (!node || typeof node.getStartLineNumber !== "function") return { line: null, column: null };
+
+	return { line: node.getStartLineNumber(), column: columnAt(node.getSourceFile(), node.getStart()) };
+};
+
+// The syntax that says WHAT KIND of declaration this is, not the name it binds:
+// `function` for a declaration, `get`/`set` for an accessor, `() =>` for an arrow.
+// The name belongs to the `function declarations` lane only as a label; the
+// RANGE a reader needs there is the form itself.
+const headOf = (node, nameNode) => {
+	const file = node.getSourceFile();
+	const kids = typeof node.getChildren === "function" ? node.getChildren() : [];
+	// `async` is a MODIFIER, and modifiers arrive as one `SyntaxList` — so the tokens
+	// of the head are read one level deep, not from the direct children only.
+	// The kind is asked of the node (`getKind`), because ts-morph nodes do not carry
+	// the compiler's `kind` field.
+	const kindOf = (child) => (typeof child.getKind === "function" ? child.getKind() : child.kind);
+	const tokens = kids.flatMap((child) => (kindOf(child) === ts.SyntaxKind.SyntaxList ? child.getChildren() : [child]));
+	const find = (kind) => tokens.find((child) => kindOf(child) === kind);
+	const spanOf = (from, to) => ({
+		line: from.getStartLineNumber(),
+		column: columnAt(file, from.getStart()),
+		columnEnd: columnAt(file, to.getEnd()) - 1,
+	});
+
+	// `async function f()` — the modifier is part of what the form reads as.
+	const keyword = find(ts.SyntaxKind.FunctionKeyword);
+	if (keyword) {
+		const asyncKeyword = find(ts.SyntaxKind.AsyncKeyword);
+
+		return asyncKeyword && asyncKeyword.getStartLineNumber() === keyword.getStartLineNumber() ? spanOf(asyncKeyword, keyword) : spanOf(keyword, keyword);
+	}
+	// `get value()` / `set value(v)` — the accessor word is the form.
+	const accessor = find(ts.SyntaxKind.GetKeyword) ?? find(ts.SyntaxKind.SetKeyword);
+	if (accessor) return spanOf(accessor, accessor);
+	// `async (a, b) => …` — the modifier, the parameter list and the arrow, when
+	// they share a row.
+	const arrow = find(ts.SyntaxKind.EqualsGreaterThanToken);
+	if (arrow) {
+		const open = find(ts.SyntaxKind.OpenParenToken);
+		const asyncKeyword = find(ts.SyntaxKind.AsyncKeyword);
+		const from = asyncKeyword && asyncKeyword.getStartLineNumber() === arrow.getStartLineNumber() ? asyncKeyword : open;
+
+		return from && from.getStartLineNumber() === arrow.getStartLineNumber() ? spanOf(from, arrow) : spanOf(arrow, arrow);
+	}
+
+	// A method or a function expression with no keyword: the name IS the form.
+	return nameNode ? { ...siteOf(nameNode), columnEnd: columnAt(file, nameNode.getEnd()) - 1 } : null;
+};
+
+// A destructured pattern declares its KEYS, not one name: `{ target, width }`
+// introduces `target` and `width`, exactly like `const { target } = options`
+// introduces them in a body. So they are variable declarations, each with its
+// own position — a pattern is not a name, but the names inside it are real.
+/**
+ * The reader's words for a syntax kind, derived from the kind itself: no table of
+ * cases to maintain. `VariableDeclaration` → "variable declarations".
+ */
+const humanizeKind = (syntaxKind) => String(ts.SyntaxKind[syntaxKind] ?? syntaxKind)
+	.replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+	.toLowerCase()
+	.replace(/^\s+|\s+$/g, "");
+const pluralOf = (syntaxKind) => {
+	const text = humanizeKind(syntaxKind);
+
+	return text.endsWith("s") ? text : `${text}s`;
+};
+
+const bindingSites = (nameNode, kind, syntaxKind) => {
+	if (!nameNode || typeof nameNode.getElements !== "function") return [];
+
+	return nameNode.getDescendantsOfKind(ts.SyntaxKind.BindingElement).map((element) => ({
+		name: element.getName(),
+		kind,
+		label: pluralOf(syntaxKind),
+		...siteOf(element),
+	}));
+};
+
+// One declaration site: a plain name at its own position, or every key a
+// destructuring pattern binds.
+const siteFor = (nameNode, kind, syntaxKind) => {
+	if (!nameNode) return [];
+	if (/^[A-Za-z_$][\w$]*$/.test(nameNode.getText())) return [{ name: nameNode.getText(), kind, label: pluralOf(syntaxKind), ...siteOf(nameNode) }];
+
+	return bindingSites(nameNode, kind, syntaxKind);
+};
+
+// EVERY name the declaration introduces, wherever it is written: its own name,
+// the parameters of the function AND of the callbacks written inside it, the
+// variables it declares, the keys of the objects it writes, and the keys of the
+// type literals in its annotations (`handler: (provider: unknown) => void`
+// introduces `handler` and `provider` too). The body tree covers the body; the
+// declaration half — parameters and type annotations — is not in the tree, so
+// it is read here, once.
+const declaredSitesOf = (node) => {
+	const sites = [];
+	const nameNodeOf = (owner) => (typeof owner.getNameNode === "function" ? owner.getNameNode() : null);
+
+	sites.push(...siteFor(nameNodeOf(node), "function", ts.SyntaxKind.FunctionDeclaration).map((site) => ({ ...site, head: headOf(node, nameNodeOf(node)) })));
+	// ONLY the function's OWN parameters are its signature. `entries.map(([key, value]) => …)`
+	// declares `key`/`value` in the BODY, and calling them "parameters" put a row of a `map`
+	// under the same lane as the signature it has nothing to do with.
+	const ownParams = node.getParameters?.() ?? [];
+	const ownParamNames = new Set(ownParams.map((param) => nameNodeOf(param)));
+	for (const param of ownParams) sites.push(...siteFor(nameNodeOf(param), "param", ts.SyntaxKind.Parameter));
+	for (const param of node.getDescendantsOfKind(ts.SyntaxKind.Parameter)) {
+		const nameNode = nameNodeOf(param);
+		if (nameNode === null || ownParamNames.has(nameNode)) continue;
+		sites.push(...siteFor(nameNode, "callback-param", ts.SyntaxKind.Parameter).map((site) => ({ ...site, label: "callback parameters" })));
+	}
+	for (const decl of node.getDescendantsOfKind(ts.SyntaxKind.VariableDeclaration)) sites.push(...siteFor(nameNodeOf(decl), "var-decl", ts.SyntaxKind.VariableDeclaration));
+	for (const prop of node.getDescendantsOfKind(ts.SyntaxKind.PropertyAssignment)) sites.push(...siteFor(nameNodeOf(prop), "prop", ts.SyntaxKind.PropertyAssignment));
+	for (const sig of node.getDescendantsOfKind(ts.SyntaxKind.PropertySignature)) sites.push(...siteFor(nameNodeOf(sig), "prop", ts.SyntaxKind.PropertySignature));
+	// The name a copy also WRITES: `result = …`, `options.limit = …`. Not a
+	// declaration, so it was absent from the name bag entirely — one whole half of
+	// an object being filled in was invisible to signature. The name of a member
+	// assignment is the MEMBER (`limit`, the same name `prop` sites carry), not the
+	// whole expression.
+	for (const assign of node.getDescendantsOfKind(ts.SyntaxKind.AssignmentExpression)) {
+		const left = assign.getLeft();
+		const target = left.isKind(ts.SyntaxKind.PropertyAccessExpression) && typeof left.getNameNode === "function" ? left.getNameNode() : left;
+		sites.push(...siteFor(target, "assign", ts.SyntaxKind.AssignmentExpression));
+	}
+
+	return sites;
+};
+
+// ---------------------------------------------------------------------------
+// THE RETURN — what the function hands back.
+//
+// Compared on its own: a `number` and the SAME number are different amounts of
+// evidence, a returned object is not the same evidence as the same object, and
+// `return undefined` is stronger than no `return` at all. Only the SHAPE of the
+// value is described here, with methods and callees collapsed to `fn`/`v.name`;
+// the keys of a returned object are already counted as names elsewhere, so they
+// are not counted twice by this signal.
+// ---------------------------------------------------------------------------
+
+const calleeShapeOf = (expr) => {
+	if (!expr) return "?";
+	if (expr.isKind(ts.SyntaxKind.PropertyAccessExpression)) return `${calleeShapeOf(expr.getExpression())}.${expr.getName()}`;
+	if (expr.isKind(ts.SyntaxKind.Identifier)) return "v";
+
+	return "?";
+};
+
+const shapeOfExpr = (expr) => {
+	if (!expr) return { role: "undefined", shape: "undefined" };
+	if (expr.isKind(ts.SyntaxKind.Identifier)) return expr.getText() === "undefined" ? { role: "undefined", shape: "undefined" } : { role: "ident", shape: "v" };
+	if (expr.isKind(ts.SyntaxKind.ObjectLiteralExpression)) {
+		const parts = expr.getProperties().map((prop) => {
+			const name = prop.getName ? prop.getName() : "?";
+			// A method inside the returned object is `fn`: its body is not the return's
+			// business (and a copy is compared by its own AST group).
+			if (prop.isKind(ts.SyntaxKind.MethodDeclaration)) return `${name}:fn`;
+			if (prop.isKind(ts.SyntaxKind.PropertyAssignment)) return `${name}:${shapeOfExpr(prop.getInitializer()).shape}`;
+			if (prop.isKind(ts.SyntaxKind.ShorthandPropertyAssignment)) return `${name}:v`;
+			if (prop.isKind(ts.SyntaxKind.SpreadAssignment)) return `...:${shapeOfExpr(prop.getExpression()).shape}`;
+
+			return `${name}:?`;
+		});
+
+		return { role: "object", shape: `{${parts.sort().join(",")}}` };
+	}
+	if (expr.isKind(ts.SyntaxKind.ArrayLiteralExpression)) return { role: "array", shape: `[${expr.getElements().map((item) => shapeOfExpr(item).shape).join(",")}]` };
+	if (expr.isKind(ts.SyntaxKind.StringLiteral) || expr.isKind(ts.SyntaxKind.NoSubstitutionTemplateLiteral)) return { role: "string", shape: `str:${expr.getText()}` };
+	if (expr.isKind(ts.SyntaxKind.NumericLiteral)) return { role: "number", shape: `num:${expr.getText()}` };
+	if (expr.isKind(ts.SyntaxKind.PrefixUnaryExpression) && expr.getOperand().isKind(ts.SyntaxKind.NumericLiteral)) return { role: "number", shape: `num:${expr.getText().replace(/\s+/g, "")}` };
+	if (expr.isKind(ts.SyntaxKind.TrueKeyword) || expr.isKind(ts.SyntaxKind.FalseKeyword)) return { role: "boolean", shape: expr.getText() };
+	if (expr.isKind(ts.SyntaxKind.ArrowFunction) || expr.isKind(ts.SyntaxKind.FunctionExpression)) return { role: "fn", shape: "fn" };
+	if (expr.isKind(ts.SyntaxKind.CallExpression)) return { role: "call", shape: `call:${calleeShapeOf(expr.getExpression())}(${expr.getArguments().map((arg) => shapeOfExpr(arg).shape).join(",")})` };
+	if (expr.isKind(ts.SyntaxKind.NewExpression)) return { role: "call", shape: `new:${calleeShapeOf(expr.getExpression())}` };
+	if (expr.isKind(ts.SyntaxKind.PropertyAccessExpression)) return { role: "expr", shape: calleeShapeOf(expr) };
+
+	return { role: "expr", shape: expr.getText().replace(/\s+/g, " ") };
+};
+
+// Every `return` written in the function's body — including the ones inside inline
+// callbacks it hands to other calls (the `async (…) => { … return … }` that comes
+// back with the value). Those are part of what a copy copies: skipping them made
+// the whole return of a tool-registering function invisible to signature.
+const returnsOf = (fn) => {
+	const body = fn.getBody();
+	if (!body) return [];
+
+	return body
+		.getDescendantsOfKind(ts.SyntaxKind.ReturnStatement)
+		.map((ret) => ({ ...shapeOfExpr(ret.getExpression()), line: ret.getStartLineNumber() }));
 };
 
 // ---------------------------------------------------------------------------
@@ -370,19 +649,27 @@ const buildDescriptor = (node, sourceFile, fileAbs) => {
 
 	const bodyTree = node.getBody() ? toPlainTree(node.getBody()) : null;
 
-	const line = node.getStartLineNumber();
+	const { line, column } = siteOf(node);
 	const endLine = node.getEndLineNumber();
-	const column = columnAt(sourceFile, node.getStart());
 
-	return {
+		// The names the DECLARATION introduces, with their exact positions — see
+		// `declaredSitesOf`. The body tree contributes its own (normalize/tree.js).
+		const declared = declaredSitesOf(node);
+
+		return {
 		name,
 		path: fileAbs,
 		line,
 		endLine,
 		column,
 		params,
+		declaredSites: declared,
+		// WHERE the reported `name` is written. The report never searches the line
+		// for it: the decision maker hands over the position it read the name from.
+		nameSite: nameNodeFor(node) ? { name, ...siteOf(nameNodeFor(node)) } : null,
 		returnType,
 		typeParams,
+		returnValues: returnsOf(node),
 		flags: {
 			async: !!isAsync,
 			generator: !!isGenerator,
@@ -392,128 +679,11 @@ const buildDescriptor = (node, sourceFile, fileAbs) => {
 	};
 };
 
-// ---------------------------------------------------------------------------
-// Type-shape discovery — interfaces and object-literal type aliases.
-//
-// The same domain described twice (an interface in file A and a near-identical
-// one in file B) is a duplicate just like a copied function body. These have
-// no executable body, so their "body" is the member list itself: the tree is
-// root(type) → prop(memberName) → lit(normalized member type), which flows
-// through the exact same structure/AST/control-flow signals as function
-// bodies. Alias-to-name (`type A = B`) and type-query aliases (`type T =
-// SomeClass`) carry no shape of their own and are skipped — they are handled
-// by entities-uniqueness.
-// ---------------------------------------------------------------------------
-
-const collectTypeNodes = (sourceFile) => {
-	const out = [];
-	const visit = (node) => {
-		if (node.isKind(ts.SyntaxKind.InterfaceDeclaration) || node.isKind(ts.SyntaxKind.TypeAliasDeclaration)) {
-			out.push(node);
-		}
-		node.forEachChild(visit);
-	};
-	visit(sourceFile);
-	return out;
-};
-
-const typeTextOf = (typeNode) => {
-	if (!typeNode) return "";
-	return sanitizeTypeText(typeNode.getText()).replace(/\s+/g, " ").trim();
-};
-
-// One member of an interface / type literal as a plain-tree subtree:
-// prop(memberName) → lit(normalized member type). Member names and types
-// carry the shape; normalization keeps `prop`/`lit` labels (only ident /
-// var-decl are positionally renamed), so two types with the same members
-// score high on structure and AST.
-const memberToTree = (member) => {
-	const name = member.getName ? member.getName() : "?";
-	let label = "";
-	if (member.isKind(ts.SyntaxKind.PropertySignature)) {
-		const typeNode = member.getTypeNode();
-		label = typeTextOf(typeNode);
-		if (member.getQuestionToken) label += member.getQuestionToken() ? "?" : "";
-	} else if (member.isKind(ts.SyntaxKind.MethodSignature)) {
-		const params = (member.getParameters() || []).map((p) => `${p.getName()}: ${typeTextOf(p.getTypeNode())}`).join(", ");
-		const ret = member.getReturnType() ? `: ${typeTextOf(member.getReturnType())}` : "";
-		label = `fn<${params}>${ret}`;
-	} else if (member.isKind(ts.SyntaxKind.IndexSignature)) {
-		label = "index";
-	}
-	return { kind: "prop", label: name || "?", children: label ? [{ kind: "lit", label, children: [] }] : [] };
-};
-
-// The members of an interface, including the members it inherits — a type
-// that extends a base describes the base's members too, so a copy of the
-// base must be comparable against the full shape.
-const inheritedMembers = (node, acc = [], seen = new Set()) => {
-	const heritage = node.getHeritageClauses ? node.getHeritageClauses() : [];
-	for (const clause of heritage) {
-		for (const typeNode of clause.getTypeNodes()) {
-			// A heritage type is an ExpressionWithTypeArguments whose
-			// expression is the base name (e.g. `extends Disposable`).
-			const expr = typeNode.isKind(ts.SyntaxKind.ExpressionWithTypeArguments) ? typeNode.getExpression() : typeNode;
-			const baseName = expr && expr.isKind(ts.SyntaxKind.Identifier) ? expr.getText() : null;
-			if (!baseName || seen.has(baseName)) continue;
-			seen.add(baseName);
-			const target = node.getSourceFile().getDescendantsOfKind(ts.SyntaxKind.InterfaceDeclaration).find((i) => i.getName() === baseName);
-			if (target) inheritedMembers(target, acc, seen);
-		}
-	}
-	acc.push(...node.getMembers());
-	return acc;
-};
-
-const buildTypeDescriptor = (node, sourceFile, fileAbs) => {
-	const name = node.getName() || "?";
-
-	let members = null;
-	if (node.isKind(ts.SyntaxKind.InterfaceDeclaration)) {
-		members = inheritedMembers(node);
-	} else if (node.isKind(ts.SyntaxKind.TypeAliasDeclaration)) {
-		const typeNode = node.getTypeNode();
-		// Only object-literal aliases describe a shape. Aliases whose text
-		// references a class (type T = SomeClass) or another named type carry
-		// no own shape.
-		if (typeNode && typeNode.isKind(ts.SyntaxKind.TypeLiteral) && !typeNode.getDescendantsOfKind(ts.SyntaxKind.TypeQuery).length) {
-			members = typeNode.getMembers();
-		}
-	}
-	if (!members || members.length === 0) return null;
-
-	const children = members.map(memberToTree);
-	const bodyTree = { kind: "type", label: name, children };
-	// The member list as a compact, order-sensitive signature: two types with
-	// the same members in the same order get an exact signature match.
-	const returnType = `{${children.map((c) => `${c.label}:${(c.children[0] && c.children[0].label) || "?"}`).join(";")}}`;
-
-	const line = node.getStartLineNumber();
-	const endLine = node.getEndLineNumber();
-	const column = columnAt(sourceFile, node.getStart());
-
-	return {
-		name,
-		path: fileAbs,
-		line,
-		endLine,
-		column,
-		params: [],
-		returnType,
-		typeParams: (node.getTypeParameters ? (node.getTypeParameters() || []).map((tp) => (tp.getName ? tp.getName() : "")) : []),
-		flags: {
-			async: false,
-			generator: false,
-		},
-		bodyTree,
-		rawText: node.getText(),
-	};
-};
 
 // Collects EVERY function in the file — exported, non-exported, nested,
-// anonymous callbacks — plus every interface / object-literal type alias.
-// Unnamed functions get synthetic names (see functionName) and are compared
-// by structure, not by name.
+// anonymous callbacks. Unnamed functions get synthetic names (see functionName)
+// and are compared by structure, not by name. Interfaces and type aliases are
+// not functions and are not compared here: they belong to entities-uniqueness.
 const parseFunctions = (fileAbs) => {
 	const sourceFile = sourceFileFor(fileAbs);
 
@@ -521,10 +691,6 @@ const parseFunctions = (fileAbs) => {
 	for (const node of collectFunctionNodes(sourceFile)) {
 		if (isComponent(node, sourceFile)) continue;
 		out.push(buildDescriptor(node, sourceFile, fileAbs));
-	}
-	for (const node of collectTypeNodes(sourceFile)) {
-		const descriptor = buildTypeDescriptor(node, sourceFile, fileAbs);
-		if (descriptor) out.push(descriptor);
 	}
 	return out;
 };
@@ -534,7 +700,7 @@ const parseFunctions = (fileAbs) => {
 // Mirrors component-uniqueness `parseParts`.
 // ---------------------------------------------------------------------------
 
-const MIN_PART_STATEMENTS = 3;
+const { MIN_PART_STATEMENTS } = require("../constants");
 
 const parseParts = (fileAbs, opts = {}) => {
 	const sourceFile = sourceFileFor(fileAbs);
@@ -543,9 +709,8 @@ const parseParts = (fileAbs, opts = {}) => {
 	const visit = (node) => {
 		if (node.isKind(ts.SyntaxKind.Block) && node.getStatements().length >= MIN_PART_STATEMENTS) {
 			const owner = ownerFunctionName(node, sourceFile);
-			const line = node.getStartLineNumber();
+			const { line, column } = siteOf(node);
 			const endLine = node.getEndLineNumber();
-			const column = columnAt(sourceFile, node.getStart());
 			const bodyTree = toPlainTree(node);
 			if (bodyTree && bodyTree.children && bodyTree.children.length >= MIN_PART_STATEMENTS) {
 				out.push({
@@ -579,6 +744,115 @@ const ownerFunctionName = (node, sourceFile) => {
 		p = p.getParent();
 	}
 	return "<fn>";
+};
+
+// A tree node carries its own source lines AND the column it starts at, 1-based
+// and relative to the snippet that was parsed. The line answers "which node is
+// under this line of code?"; the column answers "WHERE in the line", so a name
+// can be painted at the exact place it is declared instead of every place the
+// same word occurs (`options.provider` used to be painted as if `options` were
+// the declared name).
+// The 0-based index just past the mark of a node: through the `(` for a call, up
+// to the end of the first token for anything else. Positions come from the
+// parser, so no layer above has to look the word up in the line.
+// A call is marked as a CALL: from the method/function name through its closing
+// `)` — `append(change)`, not `changeLog`.
+// The LINE and the 1-based COLUMN of a character offset, from the text itself. A
+// mark is "a range on a row", so an offset must be answered with both — looking
+// only at the column silently mixes rows of a multi-line expression.
+const posInfo = (file, pos) => {
+	const text = file.getFullText();
+	let line = 1;
+	let start = 0;
+	for (let index = 0; index < pos; index += 1) {
+		if (text[index] === "\n") {
+			line += 1;
+			start = index + 1;
+		}
+	}
+
+	return { line, column: pos - start + 1 };
+};
+
+const callSpan = (node) => {
+	if (!node || typeof node.getEnd !== "function") return {};
+	const callee = typeof node.getExpression === "function" ? node.getExpression() : null;
+	if (!callee || typeof callee.getEnd !== "function") return {};
+	// A call is marked on its ARGUMENT LIST — `(200)`, `()`, `(["active"])` — because
+	// that is the boundary of the call and nothing else: `z.number().int().min(200)`
+	// is three calls, three pairs of parens. A mark is a range on ONE row, so a call
+	// whose `(` and `)` sit on different rows gets no mark rather than a wrong one.
+	const file = node.getSourceFile();
+	const open = posInfo(file, callee.getEnd());
+	const close = posInfo(file, node.getEnd());
+
+	// The mark is the ARGUMENT LIST — `(200)`, `()`, `(["active"])`. When the call is
+	// written over several rows the list has no single range, and the mark is the
+	// opening `(` alone: a range cannot cross a row, and no other layer should guess.
+	if (open.line === close.line) return { line: open.line, column: open.column, columnEnd: close.column - 1 };
+
+	// Written over several rows: BOTH parens are marked, the closing one on its own row.
+	return { line: open.line, column: open.column, columnEnd: close.column - 1, endLine: close.line };
+};
+
+// A function is marked by HOW it is declared, never by its name: `function` for a
+// function expression, `=>` for an arrow. That is the fact structure compares.
+const funcSpan = (node) => {
+	const children = typeof node.getChildren === "function" ? node.getChildren() : [];
+	const isArrow = node.isKind(ts.SyntaxKind.ArrowFunction);
+	const token = isArrow
+		? children.find((child) => child.isKind?.(ts.SyntaxKind.EqualsGreaterThanToken))
+		: children.find((child) => child.isKind?.(ts.SyntaxKind.FunctionKeyword));
+	if (!token) return {};
+	const file = node.getSourceFile();
+
+	return { column: columnAt(file, token.getStart()), columnEnd: columnAt(file, token.getEnd()) - 1 };
+};
+
+const spanEndOf = (node, column) => {
+	if (!node || typeof node.getEnd !== "function") return undefined;
+	const file = node.getSourceFile();
+	// `call` is marked through its `(`, everything else by its first CHILD — the
+	// keyword token (`if`, `try`, `new`, `return`). The compiler nodes here have no
+	// `getFirstToken`, so the first child is the token.
+	const tail =
+		node.isKind(ts.SyntaxKind.CallExpression) && typeof node.getExpression === "function"
+			? node.getExpression()
+			: typeof node.getChildren === "function" && node.getChildren().length > 0
+				? node.getChildren()[0]
+				: node;
+	if (!tail || typeof tail.getEnd !== "function") return undefined;
+	// A construct that closes on another row is marked by its first token only: a
+	// range cannot cross a row.
+	const sameRow = tail.getStartLineNumber?.() === tail.getEndLineNumber?.();
+	const end = sameRow ? columnAt(file, tail.getEnd()) - 1 : column;
+
+	return end > column ? end : column;
+};
+
+const toPlainTree = (node) => {
+	const out = toPlainTreeInner(node);
+	if (!out) return null;
+	const plain = unwrap(node);
+	if (plain && typeof plain.getStartLineNumber === "function") {
+		const { line, column } = siteOf(plain);
+		// A kind that named its own ROW wins: a call inside a chain is written where its
+		// NAME is, not where the chain begins (`z`).
+		out.start = typeof out.line === "number" ? out.line : line;
+		out.end = plain.getEndLineNumber();
+		// A kind that named its own column wins: `cond` points at the `?`, not at the
+		// start of the condition.
+		out.column = out.column ?? column;
+		// HOW WIDE the mark is — measured by the parser, never searched for in the
+		// text: a call is marked through its `(` (`append(`), everything else by its
+		// first token (`try`, `return`, `await`).
+		out.columnEnd = out.columnEnd ?? spanEndOf(plain, out.column);
+	}
+	// The NODE NAME a reader knows: `VariableDeclaration`, `FunctionDeclaration`, …
+	// Taken from the syntax kind itself, so there is nothing to keep in sync.
+	if (plain && typeof plain.getKindName === "function") out.syntax = plain.getKindName();
+
+	return out;
 };
 
 module.exports = {

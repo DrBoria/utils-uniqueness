@@ -131,7 +131,7 @@ describe("bodyless signatures (overloads / ambient) — null bodyTree", () => {
 		const candidate = buildCandidate(bodyless as any, config);
 
 		expect(candidate.ast.subtreeHashes).toBeInstanceOf(Map);
-		expect(candidate.hasStructure).toBe(false);
+		expect(candidate.structure.present).toBe(false);
 	});
 
 	it("the full pipeline survives a file full of bodyless signatures", async () => {

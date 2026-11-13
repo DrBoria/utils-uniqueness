@@ -30,7 +30,7 @@ const { pascalWords } = require("../normalize/words.js");
 // inlining even without a twin), but flagged so the report can tell the two
 // apart. Dropping singletons made real trash invisible (isAmended and its
 // siblings never reached the report).
-const MIN_TRASH_CLUSTER = 1;
+const { MIN_TRASH_CLUSTER } = require("../constants");
 
 const shapeKey = (tree) => {
 	const collapse = (node) => {

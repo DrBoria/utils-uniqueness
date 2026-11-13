@@ -4,12 +4,26 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { minimatch } = require("minimatch");
 
-const DEFAULT_EXTS = [".ts", ".tsx", ".js", ".jsx"];
+const { notice } = require("./report/notices");
+const { render } = require("./report/errorTypes/codes");
+const {
+	DEFAULT_EXTS,
+	DEFAULT_IGNORE_DIRS,
+	DEFAULT_ROOT_MARKERS,
+	DEFAULT_TEST_EXCLUDES,
+	RULE_NAME,
+	RULE_SHORT,
+	FLAT_CANDIDATES,
+	LEGACY_CANDIDATES,
+	CODE,
+} = require("./constants");
+
+
 // "out" is the default VS Code extension build dir (vsce pack / F5); "coverage"
 // is the standard test-output dir. The walker does not read .gitignore, so
 // common build-artifact names must be listed here explicitly.
-const DEFAULT_IGNORE_DIRS = ["node_modules", "dist", "build", "out", "coverage"];
-const DEFAULT_ROOT_MARKERS = [".git"];
+
+
 
 // Test files are not production utils: scanning them recommends "extract to
 // shared util" for test helpers (seedPatient ×3, row ×3, …) — pure noise in
@@ -25,7 +39,7 @@ const DEFAULT_ROOT_MARKERS = [".git"];
 // Files inside an `e2e/` directory are end-to-end test code regardless of
 // their filename (e.g. `core/e2e/coverage.ts` is not named *.e2e.*). Excluded
 // like other test code.
-const DEFAULT_TEST_EXCLUDES = ["**/*.test.*", "**/*.spec.*", "**/*.e2e.*", "**/*.stories.*", "**/e2e/**"];
+
 
 // A package.json without a marker (the tool's own dir) is NOT the repo root —
 // keep walking up until a marker dir is found, no matter how many nested
@@ -165,11 +179,11 @@ const isIgnored = (relPath, include, exclude) => {
 	return false;
 };
 
-const RULE_NAME = "md-code/utils-uniqueness";
-const RULE_SHORT = "md-code";
 
-const FLAT_CANDIDATES = ["md-code-utils-uniqueness.config.js", "eslint.config.js", "eslint.config.mjs", "eslint.config.cjs", "eslint.config.ts"];
-const LEGACY_CANDIDATES = [".eslintrc.js", ".eslintrc.cjs", ".eslintrc.json", ".eslintrc.yaml", ".eslintrc.yml"];
+
+
+
+
 
 const loadModule = (file) => {
 	const src = fs.readFileSync(file, "utf8");
@@ -265,7 +279,7 @@ const loadJson = (file) => {
 	try {
 		return JSON.parse(fs.readFileSync(file, "utf8"));
 	} catch {
-		console.warn(`[utils-uniqueness] could not read ${file}`);
+			notice(render(CODE.ConfigUnreadable, { path: file }));
 		return null;
 	}
 };
