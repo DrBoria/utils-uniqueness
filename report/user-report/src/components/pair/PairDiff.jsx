@@ -73,8 +73,25 @@ const nameRangesOf = (pair, conn) => {
 	const only = kind === "name-word" ? rest.join(":") || null : null;
 	const out = [];
 
-	const push = (end, line, from, to) => {
-		out.push({ column: end.column, line: String(line), from, to });
+	// THE TEXT OF A ROW, by column and line: what follows a name is what tells two
+	// `type` properties apart (`"dom-action"` vs `"domResponse"`).
+	const textAt = (column, line) => {
+		const row = (pair?.rows ?? []).find((entry) => String(entry.cells?.[column]?.no) === String(line));
+
+		return textOf(row?.cells?.[column]) ?? "";
+	};
+	// WHAT MAKES TWO RANGES THE SAME NAME, not merely the same word: a property carries its
+	// VALUE, everything else carries the name alone. Without the value every `type:` of a
+	// block is one name, and the duplicate a reader points at is picked by luck.
+	const keyOf = (column, line, from, to, name) => {
+		if (kind !== "prop") return String(name);
+		const value = /^\s*:\s*([^,}]*)/.exec(textAt(column, line).slice(to))?.[1]?.trim() ?? "";
+
+		return `${name}\u0000${value}`;
+	};
+
+	const push = (end, line, from, to, name) => {
+		out.push({ column: end.column, line: String(line), from, to, name: String(name), key: keyOf(Number(end.column), line, from, to, name) });
 	};
 	// WHAT the lane is about, as a range: the declaration form (`function`, `get`,
 	// `() =>`) for a function, the word itself for everything else. The position
@@ -95,7 +112,7 @@ const nameRangesOf = (pair, conn) => {
 			if (kind === "name-word") {
 				for (const word of words) {
 					if (word.line !== line || !sharedWords.has(String(word.name).toLowerCase())) continue;
-					push(end, item, word.column - 1, word.column - 1 + String(word.name).length);
+					push(end, item, word.column - 1, word.column - 1 + String(word.name).length, word.name);
 				}
 
 				continue;
@@ -109,12 +126,73 @@ const nameRangesOf = (pair, conn) => {
 				// A declaration form on another row than the id (a multi-line head) is not
 				// this id's range: the lane names rows, and only this row's own form paints.
 				if (range.line !== line) continue;
-				push(end, item, range.from, range.to);
+				push(end, item, range.from, range.to, site.name);
 			}
 		}
 	}
 
-	return out;
+	// ONE DUPLICATE PER RANGE. Two ranges with the same KEY are the same name written on
+	// the two sides, so each is the other's twin — and a hover can light exactly that,
+	// instead of the row, the lane, or the first name that happens to match.
+	const byKey = new Map();
+	for (const range of out) {
+		const list = byKey.get(range.key) ?? [];
+		list.push(range);
+		byKey.set(range.key, list);
+	}
+	for (const list of byKey.values()) {
+		// A name written twice on one side (`type: "domResponse"` in both catch blocks) is
+		// still one pair per occurrence: take each side in order and pair them off.
+		const sides = new Map();
+		for (const range of list) {
+			const side = sides.get(range.column) ?? [];
+			side.push(range);
+			sides.set(range.column, side);
+		}
+		const columns = [...sides.keys()];
+		if (columns.length < 2) continue;
+		const [leftColumn, rightColumn] = columns;
+		const left = sides.get(leftColumn) ?? [];
+		const right = sides.get(rightColumn) ?? [];
+		for (let index = 0; index < Math.min(left.length, right.length); index += 1) {
+			const a = left[index];
+			const b = right[index];
+			if (a === undefined || b === undefined) continue;
+			a.twin = { column: b.column, line: b.line, from: b.from, to: b.to };
+			b.twin = { column: a.column, line: a.line, from: a.from, to: a.to };
+		}
+	}
+	// SECOND PASS: BY NAME, IN ORDER. `text: \`Dragged …\`` and `text: \`Scrolled …\`` are the
+	// same property twice with different values — the value cannot pair them, but their
+	// position in the object can. Without this the duplicate was simply not shown.
+	const byName = new Map();
+	for (const range of out) {
+		if (range.twin !== undefined) continue;
+		const list = byName.get(range.name) ?? [];
+		list.push(range);
+		byName.set(range.name, list);
+	}
+	for (const list of byName.values()) {
+		const sides = new Map();
+		for (const range of list) {
+			const side = sides.get(range.column) ?? [];
+			side.push(range);
+			sides.set(range.column, side);
+		}
+		const columns = [...sides.keys()];
+		if (columns.length < 2) continue;
+		const left = sides.get(columns[0]) ?? [];
+		const right = sides.get(columns[1]) ?? [];
+		for (let index = 0; index < Math.min(left.length, right.length); index += 1) {
+			const a = left[index];
+			const b = right[index];
+			if (a === undefined || b === undefined) continue;
+			a.twin = { column: b.column, line: b.line, from: b.from, to: b.to };
+			b.twin = { column: a.column, line: a.line, from: a.from, to: a.to };
+		}
+	}
+
+	return out.map(({ column, line, from, to, twin }) => (twin === undefined ? { column, line, from, to } : { column, line, from, to, twin }));
 };
 
 const correspondencesOf = (pair, key = "connections") => {
@@ -123,6 +201,19 @@ const correspondencesOf = (pair, key = "connections") => {
 
 	for (const conn of pair?.[key] ?? []) {
 		const marks = conn.marks ?? [];
+		// STRUCTURE Pairs its constructs: the range a lane holds on the left and the range it
+		// holds on the right are the same construct, so each is the other's twin.
+		if (key === "structureConnections") {
+			const left = marks.filter((mark) => mark.column === "0");
+			const right = marks.filter((mark) => mark.column === "1");
+			for (let index = 0; index < Math.min(left.length, right.length); index += 1) {
+				const a = left[index];
+				const b = right[index];
+				if (a === undefined || b === undefined) continue;
+				a.twin = { column: b.column, line: b.line, from: b.from, to: b.to };
+				b.twin = { column: a.column, line: a.line, from: a.from, to: a.to };
+			}
+		}
 		connections.push({
 			id: conn.connectionId,
 			tone: "same",
@@ -403,6 +494,17 @@ const astConnectionsOf = (pair) => {
 		}
 		if (ends.length === 0) continue;
 		ends.push({ column: "2", items: [`m:${block}`] });
+		// ONE BLOCK, ONE DUPLICATE: the range in the left code column and its range in the
+		// right one are the same construct, so each carries the other and a hover lights both.
+		const left = marks.filter((mark) => mark.column === "0");
+		const right = marks.filter((mark) => mark.column === "4");
+		for (let index = 0; index < Math.min(left.length, right.length); index += 1) {
+			const a = left[index];
+			const b = right[index];
+			if (a === undefined || b === undefined) continue;
+			a.twin = { column: b.column, line: b.line, from: b.from, to: b.to };
+			b.twin = { column: a.column, line: a.line, from: a.from, to: a.to };
+		}
 		rows.push({ id: `b:${block}`, tone: unmatched.has(block) ? "differs" : "same", label: null, ends, marks });
 	}
 
@@ -464,21 +566,38 @@ export const PairDiff = ({ rows, pair, reveal = false, corridor = 220, fit = "sc
 	// each `const`, `new`, `if`, `call` and `return` starts — so the constructs that are
 	// counted in the middle are underlined in the code, exactly as in the structure tab.
 	const flowRanges = new Map();
+	// The ranges of ONE STEP, both sides: the lane carries them, so pointing at a construct
+	// can light it and its duplicate instead of only warming the lane.
+	const flowStepMarks = new Map();
 	for (const step of numbers) {
+		const made = {};
 		for (const [column, at] of [
 			["0", step.leftStep],
 			["1", step.rightStep],
 		]) {
-			// A construct that spans several lines has no single range on this row.
-			if (at == null || at.endLine != null) continue;
+			// A construct that spans several lines starts here: the range covers the rest of
+			// this line, so the word a reader points at is still in it.
+			if (at == null) continue;
 			const from = Number(at.column) - 1;
-			const to = Number(at.columnEnd);
-			if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from) continue;
-			const key = `${column}\u0000${String(at.line)}`;
+			const to = at.endLine != null ? Number.MAX_SAFE_INTEGER : Number(at.columnEnd);
+			if (!Number.isFinite(from) || Number.isNaN(to) || to <= from) continue;
+			made[column] = { column, line: String(at.line), from, to };
+		}
+		// THE STEP IS A PAIR: `const` here is the `const` over there, so each range carries
+		// the other one. Hovering it lights both, not only the side the pointer is on.
+		const left = made["0"];
+		const right = made["1"];
+		if (left !== undefined && right !== undefined) {
+			left.twin = { column: right.column, line: right.line, from: right.from, to: right.to };
+			right.twin = { column: left.column, line: left.line, from: left.from, to: left.to };
+		}
+		for (const range of Object.values(made)) {
+			const key = `${range.column}\u0000${range.line}`;
 			const ranges = flowRanges.get(key) ?? [];
-			ranges.push({ from, to });
+			ranges.push(range);
 			flowRanges.set(key, ranges);
 		}
+		flowStepMarks.set(step.id, Object.values(made));
 	}
 	// ONE STEP, ONE ROW, ONE RIBBON. `const x = new Y()` is a `var` AND a `new`; packing both
 	// numbers into the row of one code line made the reader count two constructs on one line
@@ -488,7 +607,7 @@ export const PairDiff = ({ rows, pair, reveal = false, corridor = 220, fit = "sc
 		tone: "same",
 		label: null,
 		ends: [{ column: "0", items: [String(step.left)] }, { column: "2", items: [step.id] }, { column: "1", items: [String(step.right)] }],
-		marks: [],
+		marks: flowStepMarks.get(step.id) ?? [],
 	}));
 	for (const step of numbers) chosen.add(`2\u0000${step.id}`);
 	const flowColumn =
