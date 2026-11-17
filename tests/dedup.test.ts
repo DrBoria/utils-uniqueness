@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { dedupPairs, capSimilarFanout } = require("../main.js");
+const { dedupPairs, capSimilarFanout } = require("../dist/main.js");
 
 // A match record as produced by matchPairs: { app, canon, decision, tier, reason }.
 const match = (appPath: string, appName: string, canonPath: string, canonName: string, confidence: number, tier = "duplicate") => ({

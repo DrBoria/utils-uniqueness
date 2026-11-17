@@ -5,8 +5,8 @@ import fs from "node:fs";
 import os from "node:os";
 
 const require = createRequire(import.meta.url);
-const { whenReady, parseFunctions } = require("../playgrounds/typescript.js");
-const { buildAst, multisetJaccard, sequenceSimilarity } = require("../normalize/ast.js");
+const { whenReady, parseFunctions } = require("../dist/playgrounds/typescript.js");
+const { buildAst, multisetJaccard, sequenceSimilarity } = require("../dist/normalize/ast.js");
 
 const countNodes = (n: any): number => (n ? 1 + (n.children || []).reduce((s: number, c: any) => s + countNodes(c), 0) : 0);
 

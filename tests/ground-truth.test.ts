@@ -3,9 +3,9 @@ import { createRequire } from "node:module";
 import path from "node:path";
 
 const require = createRequire(import.meta.url);
-const main = require("../main.js");
-const { normalizeOptions } = require("../config.js");
-const { whenReady } = require("../playgrounds/typescript.js");
+const main = require("../dist/main.js");
+const { normalizeOptions } = require("../dist/config.js");
+const { whenReady } = require("../dist/playgrounds/typescript.js");
 
 const pluginDir = path.resolve(__dirname, "..");
 

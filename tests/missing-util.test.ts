@@ -5,9 +5,9 @@ import fs from "node:fs";
 import os from "node:os";
 
 const require = createRequire(import.meta.url);
-const { whenReady, parseFunctions } = require("../playgrounds/typescript.js");
-const { buildCandidate } = require("../normalize/candidate.js");
-const { findMissingUtils, pairSimilarity } = require("../filter/missing-util.js");
+const { whenReady, parseFunctions } = require("../dist/playgrounds/typescript.js");
+const { buildCandidate } = require("../dist/normalize/candidate.js");
+const { findMissingUtils, pairSimilarity } = require("../dist/filter/missing-util.js");
 
 // Parse a set of named functions from a single temp file into candidates.
 const parseCandidates = async (source: string, names: string[]) => {

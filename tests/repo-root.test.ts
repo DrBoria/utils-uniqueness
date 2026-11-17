@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { pickRepoRoot } from "../config";
+import { pickRepoRoot } from "../dist/config.js";
 
 // The tool may live in its OWN git repo (a nested .git), while the consumer
 // project has its own .git somewhere above the config file. Walking up from the

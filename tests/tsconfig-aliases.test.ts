@@ -5,8 +5,8 @@ import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 const require = createRequire(import.meta.url);
-const { parseFunctions, setTsConfig } = require("../playgrounds/typescript.js");
-const { buildCandidate } = require("../normalize/candidate.js");
+const { parseFunctions, setTsConfig } = require("../dist/playgrounds/typescript.js");
+const { buildCandidate } = require("../dist/normalize/candidate.js");
 
 // A repo whose TypeScript declares `paths` (`@app/*` → `src/*`). Both helpers
 // take the SAME interface code, one spelled as an alias and one as a relative

@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 
 const pluginDir = path.resolve(__dirname, "..");
-const mainJs = path.join(pluginDir, "main.js");
+const mainJs = path.join(pluginDir, "dist", "main.js");
 const tmpRoot = mkdtempSync(path.join(os.tmpdir(), "uu-cli-"));
 
 afterAll(() => {
@@ -47,11 +47,12 @@ describe("CLI", () => {
 			const report = "reports/cli-files.md";
 			const catalog = path.join(pluginDir, "reports", "utils-catalog.json");
 			const before = existsSync(catalog) ? readFileSync(catalog, "utf8") : null;
-			const out = runCli(["--repo-root", ".", "--roots", "tests/utils", "--files", "tests/utils/strings.ts", "--report", report]);
+			const out = runCli(["--repo-root", ".", "--roots", "tests/utils", "--files", "tests/duplicates/stringDups.ts", "--report", report]);
 			const md = readReport(report);
 
 			expect(out).toContain("wrote report");
 			expect(md).toContain("Scanned 1 app file(s)");
+			// capFirst (in stringDups.ts) is a renamed copy of the canonical capitalize.
 			expect(md).toContain("capitalize");
 			// a single-file scan must not clobber the folder-based catalog
 			expect(existsSync(catalog) ? readFileSync(catalog, "utf8") : null).toBe(before);

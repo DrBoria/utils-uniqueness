@@ -5,9 +5,9 @@ import os from "node:os";
 import path from "node:path";
 
 const require = createRequire(import.meta.url);
-const plugin = require("../index.js");
-const { parseFunctions } = require("../playgrounds/typescript.js");
-const { buildCandidate } = require("../normalize/candidate.js");
+const plugin = require("../dist/index.js");
+const { parseFunctions } = require("../dist/playgrounds/typescript.js");
+const { buildCandidate } = require("../dist/normalize/candidate.js");
 
 // This exercises the ESLint RULE (index.js -> createRule), which is a DIFFERENT
 // code path from the CLI (main.js). Every other test in this folder drives the

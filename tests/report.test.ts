@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { renderUtilsReport } = require("../report.js");
+const { renderUtilsReport } = require("../dist/report.js");
 
 // The Duplicate / Similar sections only render APP-layer matches (layer matches
 // go to the "Inside <folder>" sections), and the Trash section header shows the

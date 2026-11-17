@@ -3,8 +3,8 @@ import { createRequire } from "node:module";
 import path from "node:path";
 
 const require = createRequire(import.meta.url);
-const main = require("../main.js");
-const { normalizeOptions } = require("../config.js");
+const main = require("../dist/main.js");
+const { normalizeOptions } = require("../dist/config.js");
 
 const pluginDir = path.resolve(__dirname, "..");
 
@@ -16,7 +16,7 @@ describe("test-file exclusion (default)", () => {
 		const config = normalizeOptions({ root: pluginDir });
 		const shouldSkip = (abs: string) => {
 			const rel = path.relative(pluginDir, abs).split(path.sep).join("/");
-			return require("../config.js").isIgnored(rel, [], config.exclude);
+			return require("../dist/config.js").isIgnored(rel, [], config.exclude);
 		};
 		const { files } = main.collectFiles(["tests/NOT_duplicates/testfiles"], pluginDir, shouldSkip, config.exts, config.ignoreDirs);
 
@@ -37,7 +37,7 @@ describe("test-file exclusion (default)", () => {
 		const config = normalizeOptions({ root: pluginDir });
 		const shouldSkip = (abs: string) => {
 			const rel = path.relative(pluginDir, abs).split(path.sep).join("/");
-			return require("../config.js").isIgnored(rel, [], config.exclude);
+			return require("../dist/config.js").isIgnored(rel, [], config.exclude);
 		};
 		const { files } = main.collectFiles(["tests/NOT_duplicates/testfiles"], pluginDir, shouldSkip, config.exts, config.ignoreDirs);
 
@@ -56,7 +56,7 @@ describe("test-file exclusion (default)", () => {
 		const config = normalizeOptions({ root: pluginDir });
 		const shouldSkip = (abs: string) => {
 			const rel = path.relative(pluginDir, abs).split(path.sep).join("/");
-			return require("../config.js").isIgnored(rel, [], config.exclude);
+			return require("../dist/config.js").isIgnored(rel, [], config.exclude);
 		};
 		const { files } = main.collectFiles(["tests/NOT_duplicates/testfiles"], pluginDir, shouldSkip, config.exts, config.ignoreDirs);
 
@@ -75,7 +75,7 @@ describe("test-file exclusion (default)", () => {
 		const config = normalizeOptions({ root: pluginDir, exclude: ["**/prod.ts"] });
 		const shouldSkip = (abs: string) => {
 			const rel = path.relative(pluginDir, abs).split(path.sep).join("/");
-			return require("../config.js").isIgnored(rel, [], config.exclude);
+			return require("../dist/config.js").isIgnored(rel, [], config.exclude);
 		};
 		const { files } = main.collectFiles(["tests/NOT_duplicates/testfiles"], pluginDir, shouldSkip, config.exts, config.ignoreDirs);
 

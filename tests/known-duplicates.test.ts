@@ -5,9 +5,9 @@ import os from "node:os";
 import path from "node:path";
 
 const require = createRequire(import.meta.url);
-const plugin = require("../index.js");
-const { parseFunctions } = require("../playgrounds/typescript.js");
-const { buildCandidate } = require("../normalize/candidate.js");
+const plugin = require("../dist/index.js");
+const { parseFunctions } = require("../dist/playgrounds/typescript.js");
+const { buildCandidate } = require("../dist/normalize/candidate.js");
 
 // The rule reads a PRECOMPUTED catalog from disk, so the test builds one from
 // the same shape the CLI produces. Everything below is driven through

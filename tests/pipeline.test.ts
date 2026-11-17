@@ -3,11 +3,11 @@ import { createRequire } from "node:module";
 import path from "node:path";
 
 const require = createRequire(import.meta.url);
-const main = require("../main.js");
-const { normalizeOptions, isIgnored } = require("../config.js");
-const { whenReady, parseFunctions } = require("../playgrounds/typescript.js");
-const { buildAst, multisetJaccard } = require("../normalize/ast.js");
-const { buildCandidate } = require("../normalize/candidate.js");
+const main = require("../dist/main.js");
+const { normalizeOptions, isIgnored } = require("../dist/config.js");
+const { whenReady, parseFunctions } = require("../dist/playgrounds/typescript.js");
+const { buildAst, multisetJaccard } = require("../dist/normalize/ast.js");
+const { buildCandidate } = require("../dist/normalize/candidate.js");
 
 const pluginDir = path.resolve(__dirname, "..");
 const relPosix = (abs: string) => path.relative(pluginDir, abs).split(path.sep).join("/");

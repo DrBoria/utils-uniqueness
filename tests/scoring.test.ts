@@ -2,10 +2,10 @@ import { describe, expect, it } from "vitest";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { matchStructure, bagJaccard: structBag } = require("../matcher/structure.js");
-const { matchControlFlow, bagJaccard: cfBag } = require("../matcher/control-flow.js");
-const { buildSignature, shapeHash } = require("../normalize/signature.js");
-const { decide } = require("../decision-maker.js");
+const { matchStructure, countAgreement } = require("../dist/matcher/structure.js");
+const { matchControlFlow, alignSteps } = require("../dist/matcher/control-flow.js");
+const { buildSignature, shapeHash } = require("../dist/normalize/signature.js");
+const { decide } = require("../dist/decision-maker.js");
 
 // A minimal candidate/canon pair factory. Only the fields each matcher reads
 // are populated; everything else is inert.
@@ -18,21 +18,40 @@ const mk = (over: Record<string, unknown> = {}) => ({
 	...over,
 });
 
-describe("bagJaccard — empty-bag degeneracy", () => {
+describe("countAgreement — empty-bag degeneracy", () => {
+	// The structure group compares kind bags by sum(min)/sum(max). Two empty bags
+	// share nothing, so the score is 0 — NOT 1 (the old bagJaccard returned 1 for
+	// two empty bags, which made two bodyless stubs look perfectly similar).
 	it("returns 0 (not 1) for two empty bags", () => {
-		expect(structBag(new Map(), new Map())).toBe(0);
-		expect(cfBag(new Map(), new Map())).toBe(0);
+		expect(countAgreement(new Map(), new Map()).score).toBe(0);
 	});
 
 	it("returns 0 when only one bag is empty", () => {
 		const a = new Map([["return", 1]]);
-		expect(structBag(a, new Map())).toBe(0);
-		expect(structBag(new Map(), a)).toBe(0);
+		expect(countAgreement(a, new Map()).score).toBe(0);
+		expect(countAgreement(new Map(), a).score).toBe(0);
 	});
 
 	it("still returns 1 for two identical non-empty bags", () => {
 		const a = new Map([["return", 1], ["call", 2]]);
-		expect(structBag(a, new Map([["return", 1], ["call", 2]]))).toBe(1);
+		expect(countAgreement(a, new Map([["return", 1], ["call", 2]])).score).toBe(1);
+	});
+});
+
+describe("alignSteps — empty-run degeneracy (control flow is run-based, not a bag)", () => {
+	// Control flow no longer compares a bag: it aligns the ordered run of steps.
+	// Two empty runs share no step, so the alignment is empty.
+	it("returns no pairs for two empty runs", () => {
+		expect(alignSteps([], [])).toEqual([]);
+	});
+
+	it("returns no pairs when only one run is empty", () => {
+		expect(alignSteps(["return"], [])).toEqual([]);
+		expect(alignSteps([], ["return"])).toEqual([]);
+	});
+
+	it("pairs every step of two identical runs", () => {
+		expect(alignSteps(["call", "return"], ["call", "return"])).toEqual([[0, 0], [1, 1]]);
 	});
 });
 
@@ -134,14 +153,12 @@ describe("similar-tier floor — the weak tail is not reported", () => {
 	// Empirical finding (chomp-2 real run, 3388 "similar" rows): 72% sit at
 	// confidence 0.50-0.60, barely above chance on a 4-signal weighted average
 	// where 0.50 means "half the signals agree". That is not a useful "similar"
-	// signal. Raising the default similar floor from 0.5 to 0.6 drops that tail
-	// while leaving the 0.60+ rows (and every verified true duplicate, which
-	// lives in the 0.7+ duplicate tier) untouched.
+	// signal. The default similar floor was raised 0.5 → 0.6 → 0.65: below 0.65
+	// the groups disagree more than they agree (constants.DEFAULT_THRESHOLDS).
 	const weakPair = () => {
 		const app = mk({ nodes: 20, tree: { kind: "block", children: [] } });
 		const canon = mk({ nodes: 20, tree: { kind: "block", children: [] } });
-		// 0.8*0.3 + 0.5*0.3 + 0.4*0.2 + 0.4*0.2 = 0.55 — above the old 0.5 floor,
-		// below the new 0.6 floor.
+		// 0.8*0.3 + 0.5*0.3 + 0.4*0.2 + 0.4*0.2 = 0.55 — below the 0.65 floor.
 		const signals = {
 			signature: { score: 0.8, evidence: {} },
 			structure: { score: 0.5, evidence: {} },
@@ -151,10 +168,10 @@ describe("similar-tier floor — the weak tail is not reported", () => {
 		return { app, canon, signals };
 	};
 
-	it("defaults the similar floor to 0.6 (not 0.5)", () => {
+	it("defaults the similar floor to 0.65", () => {
 		const { app, canon, signals } = weakPair();
 		const decision = decide(app, canon, { signals });
-		expect(decision.thresholds.similar).toBe(0.6);
+		expect(decision.thresholds.similar).toBe(0.65);
 	});
 
 	it("does not report a 0.55-confidence pair as similar under the default floor", () => {
@@ -164,17 +181,18 @@ describe("similar-tier floor — the weak tail is not reported", () => {
 		expect(decision.tier).not.toBe("similar");
 	});
 
-	it("still reports a 0.62-confidence pair as similar under the default floor", () => {
+	it("still reports a 0.66-confidence pair as similar under the default floor", () => {
 		const { app, canon } = weakPair();
-		// 0.9*0.3 + 0.5*0.3 + 0.4*0.2 + 0.6*0.2 = 0.62 — just above the 0.6 floor.
+		// 0.8*0.3 + 0.6*0.3 + 0.6*0.2 + 0.6*0.2 = 0.66 — just above the 0.65 floor,
+		// below the 0.75 duplicate threshold (and ast 0.6 < 0.75 vetoes duplicate).
 		const signals = {
-			signature: { score: 0.9, evidence: {} },
-			structure: { score: 0.5, evidence: {} },
-			ast: { score: 0.4, evidence: {} },
+			signature: { score: 0.8, evidence: {} },
+			structure: { score: 0.6, evidence: {} },
+			ast: { score: 0.6, evidence: {} },
 			controlFlow: { score: 0.6, evidence: {} },
 		};
 		const decision = decide(app, canon, { signals });
-		expect(decision.confidence).toBeCloseTo(0.62, 5);
+		expect(decision.confidence).toBeCloseTo(0.66, 5);
 		expect(decision.tier).toBe("similar");
 	});
 });

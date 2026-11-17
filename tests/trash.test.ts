@@ -3,9 +3,9 @@ import { createRequire } from "node:module";
 import path from "node:path";
 
 const require = createRequire(import.meta.url);
-const main = require("../main.js");
-const { normalizeOptions } = require("../config.js");
-const { whenReady } = require("../playgrounds/typescript.js");
+const main = require("../dist/main.js");
+const { normalizeOptions } = require("../dist/config.js");
+const { whenReady } = require("../dist/playgrounds/typescript.js");
 
 const pluginDir = path.resolve(__dirname, "..");
 const APP_PAIR_ROOTS = ["tests/duplicates", "tests/Trash"];
@@ -48,29 +48,29 @@ const cand = (name: string, bodyTree: any, params: any[] = [{ name: "set" }]) =>
 });
 
 const member = (prop: string) => ({ kind: "member", label: prop, children: [{ kind: "ident", label: "v", children: [] }] });
-const eq = (a: any, b: any) => ({ kind: "bin", label: "EqualsEqualsEqualsToken", children: [a, b] });
+const eq = (a: any, b: any) => ({ kind: "bin", label: "===", children: [a, b] });
 const str = (text: string) => ({ kind: "lit", label: text, children: [] });
 
 describe("trashScore — pure scoring of the Trash category", () => {
 	it("scores a status-guard one-liner (is* name + status field) as trash", () => {
-		const { trashScore } = require("../decision-maker.js");
+		const { trashScore } = require("../dist/decision-maker.js");
 		const c = cand("isRemoved", eq(member("status"), str("entered-in-error")));
 
 		expect(trashScore(c)).toBeGreaterThanOrEqual(70);
 	});
 
 	it("scores a clean-literal status guard as trash too", () => {
-		const { trashScore } = require("../decision-maker.js");
+		const { trashScore } = require("../dist/decision-maker.js");
 		const c = cand("isAnnotated", eq(member("status"), str("amended")));
 
 		expect(trashScore(c)).toBeGreaterThanOrEqual(70);
 	});
 
 	it("scores an || chain of status comparisons as trash", () => {
-		const { trashScore } = require("../decision-maker.js");
+		const { trashScore } = require("../dist/decision-maker.js");
 		const body = {
 			kind: "bin",
-			label: "BarBarToken",
+			label: "||",
 			children: [eq(member("status"), str("amended")), eq(member("status"), str("corrected"))],
 		};
 		const c = cand("isAmended", body);
@@ -79,14 +79,14 @@ describe("trashScore — pure scoring of the Trash category", () => {
 	});
 
 	it("does NOT score a plain field accessor (no comparison) as trash", () => {
-		const { trashScore } = require("../decision-maker.js");
+		const { trashScore } = require("../dist/decision-maker.js");
 		const c = cand("countAllergies", member("length"), [{ name: "rows" }]);
 
 		expect(trashScore(c)).toBeLessThan(40);
 	});
 
 	it("does NOT score a function with a call in the body as trash", () => {
-		const { trashScore } = require("../decision-maker.js");
+		const { trashScore } = require("../dist/decision-maker.js");
 		const body = eq({ kind: "call", label: "trim", children: [member("status")] }, str("x"));
 		const c = cand("isTrimmed", body);
 
@@ -94,7 +94,7 @@ describe("trashScore — pure scoring of the Trash category", () => {
 	});
 
 	it("scores a predicate body as trash even with a non-predicate name (name is a bonus, not a gate)", () => {
-		const { trashScore } = require("../decision-maker.js");
+		const { trashScore } = require("../dist/decision-maker.js");
 		const c = cand("checkStatus", eq(member("status"), str("amended")));
 
 		// The body is a valueless one-liner regardless of the name: it scores
@@ -108,7 +108,7 @@ describe("trashScore — pure scoring of the Trash category", () => {
 		// .map()/.filter() call and there is nothing to inline. The matcher
 		// (trashScore) is correct; the filter (isTrash) must cut it out.
 		// Named functions keep the trash verdict.
-		const { isTrash } = require("../decision-maker.js");
+		const { isTrash } = require("../dist/decision-maker.js");
 		const anon = cand("filter#anon@42", eq(member("type"), str("none")), [{ name: "r" }]);
 		const named = cand("isNone", eq(member("type"), str("none")), [{ name: "r" }]);
 
@@ -117,14 +117,14 @@ describe("trashScore — pure scoring of the Trash category", () => {
 	});
 
 	it("does NOT score a multi-field predicate (kind !== X && category !== null) as trash", () => {
-		const { trashScore, TRASH_THRESHOLD } = require("../decision-maker.js");
+		const { trashScore, TRASH_THRESHOLD } = require("../dist/decision-maker.js");
 		const kind = (v: string) => ({ kind: "member", label: v, children: [{ kind: "ident", label: "row", children: [] }] });
 		const body = {
 			kind: "bin",
-			label: "AmpersandAmpersandToken",
+			label: "&&",
 			children: [
-				{ kind: "bin", label: "ExclamationEqualsEqualsToken", children: [kind("kind"), str("nka")] },
-				{ kind: "bin", label: "ExclamationEqualsEqualsToken", children: [kind("category"), str("null")] },
+				{ kind: "bin", label: "!==", children: [kind("kind"), str("nka")] },
+				{ kind: "bin", label: "!==", children: [kind("category"), str("null")] },
 			],
 		};
 		const c = cand("resolvable", body, [{ name: "row" }]);
@@ -135,14 +135,14 @@ describe("trashScore — pure scoring of the Trash category", () => {
 	});
 
 	it("does NOT score a multi-field || validation rule as trash", () => {
-		const { trashScore, TRASH_THRESHOLD } = require("../decision-maker.js");
+		const { trashScore, TRASH_THRESHOLD } = require("../dist/decision-maker.js");
 		const field = (v: string) => ({ kind: "member", label: v, children: [{ kind: "ident", label: "input", children: [] }] });
 		const body = {
 			kind: "bin",
-			label: "BarBarToken",
+			label: "||",
 			children: [
-				{ kind: "bin", label: "EqualsEqualsToken", children: [field("spo2FlowRate"), str("undefined")] },
-				{ kind: "bin", label: "EqualsEqualsToken", children: [field("spo2SupplementalO2"), str("true")] },
+				{ kind: "bin", label: "==", children: [field("spo2FlowRate"), str("undefined")] },
+				{ kind: "bin", label: "==", children: [field("spo2SupplementalO2"), str("true")] },
 			],
 		};
 		const c = cand("flowRateNeedsSupplementalO2", body, [{ name: "input" }]);
@@ -151,14 +151,14 @@ describe("trashScore — pure scoring of the Trash category", () => {
 	});
 
 	it("does NOT score an instanceof + code guard as trash (type guards carry value)", () => {
-		const { trashScore, TRASH_THRESHOLD } = require("../decision-maker.js");
+		const { trashScore, TRASH_THRESHOLD } = require("../dist/decision-maker.js");
 		const code = { kind: "member", label: "code", children: [{ kind: "ident", label: "err", children: [] }] };
 		const body = {
 			kind: "bin",
-			label: "AmpersandAmpersandToken",
+			label: "&&",
 			children: [
 				{ kind: "bin", label: "InstanceOfToken", children: [{ kind: "ident", label: "err", children: [] }, { kind: "ident", label: "Error", children: [] }] },
-				{ kind: "bin", label: "EqualsEqualsToken", children: [code, str("404")] },
+				{ kind: "bin", label: "==", children: [code, str("404")] },
 			],
 		};
 		const c = cand("isPatientNotFound", body, [{ name: "err" }]);
@@ -167,7 +167,7 @@ describe("trashScore — pure scoring of the Trash category", () => {
 	});
 
 	it("never scores a trash body at a round 100 (kebab literals are not a bonus)", () => {
-		const { trashScore } = require("../decision-maker.js");
+		const { trashScore } = require("../dist/decision-maker.js");
 		// `entered-in-error` is a normal FHIR status (kebab-case). A kebab
 		// literal must not push a 95-score status guard to a suspiciously
 		// round 100 — the +5 "dirty literal" bonus is semantically noise.
@@ -179,8 +179,8 @@ describe("trashScore — pure scoring of the Trash category", () => {
 
 describe("splitTrashClusters — all-trash clusters move to the trash side", () => {
 	it("splits a cluster whose members are all trash", () => {
-		const { splitTrashClusters } = require("../filter/trash.js");
-		const { trashScore } = require("../decision-maker.js");
+		const { splitTrashClusters } = require("../dist/filter/trash.js");
+		const { trashScore } = require("../dist/decision-maker.js");
 		const guard = (name: string) => ({ name, path: "a.ts", line: 1, bodyTree: eq(member("status"), str("x")) });
 		const { keep, trash } = splitTrashClusters([
 			{ name: "Status", members: [guard("isAnnotated"), guard("isRemoved")], confidence: 0.9 },
@@ -192,7 +192,7 @@ describe("splitTrashClusters — all-trash clusters move to the trash side", () 
 	});
 
 	it("keeps a cluster with at least one non-trash member", () => {
-		const { splitTrashClusters } = require("../filter/trash.js");
+		const { splitTrashClusters } = require("../dist/filter/trash.js");
 		const guard = { name: "isAnnotated", path: "a.ts", line: 1, bodyTree: eq(member("status"), str("x")) };
 		const real = { name: "summarizeAllergies", path: "b.ts", line: 1, bodyTree: { kind: "for-of", label: "for-of", children: [] } };
 		const { keep, trash } = splitTrashClusters([
@@ -206,9 +206,9 @@ describe("splitTrashClusters — all-trash clusters move to the trash side", () 
 
 describe("collectTrashClusters — singletons stay visible", () => {
 	it("keeps a singleton trash function in the result, flagged as singleton", () => {
-		const { collectTrashClusters } = require("../filter/trash.js");
+		const { collectTrashClusters } = require("../dist/filter/trash.js");
 		const guard = (name: string, lit: string) => ({ name, path: "a.ts", line: 1, bodyTree: eq(member("status"), str(lit)) });
-		const lone = { name: "isAmended", path: "b.ts", line: 9, bodyTree: { kind: "bin", label: "BarBarToken", children: [eq(member("status"), str("amended")), eq(member("status"), str("corrected"))] } };
+		const lone = { name: "isAmended", path: "b.ts", line: 9, bodyTree: { kind: "bin", label: "||", children: [eq(member("status"), str("amended")), eq(member("status"), str("corrected"))] } };
 
 		const clusters = collectTrashClusters([guard("isRemoved", "x"), guard("isAnnotated", "y"), lone]);
 
@@ -223,7 +223,7 @@ describe("collectTrashClusters — singletons stay visible", () => {
 	});
 
 	it("does not flag a size-2 shape cluster as singleton", () => {
-		const { collectTrashClusters } = require("../filter/trash.js");
+		const { collectTrashClusters } = require("../dist/filter/trash.js");
 		const guard = (name: string, lit: string) => ({ name, path: "a.ts", line: 1, bodyTree: eq(member("status"), str(lit)) });
 
 		const clusters = collectTrashClusters([guard("isRemoved", "x"), guard("isAnnotated", "y")]);
@@ -234,7 +234,7 @@ describe("collectTrashClusters — singletons stay visible", () => {
 });
 
 describe("trashClusterName — cluster headings are distinguishable", () => {
-	const { trashClusterName } = require("../filter/trash.js");
+	const { trashClusterName } = require("../dist/filter/trash.js");
 	const m = (name: string) => ({ name });
 
 	it("derives a name from the words that distinguish the members", () => {
