@@ -8,8 +8,9 @@ const { normalizeOptions } = require("../dist/config.js");
 const { whenReady } = require("../dist/playgrounds/typescript.js");
 
 const pluginDir = path.resolve(__dirname, "..");
-const APP_PAIR_ROOTS = ["tests/duplicates", "tests/Trash"];
-const CANON_ROOTS = ["tests/utils"];
+// tests/duplicates includes the Trash/ subfolder (valueless status guards).
+const APP_PAIR_ROOTS = ["tests/duplicates"];
+const CANON_ROOTS = ["tests/NOT_duplicates"];
 
 // The status-guard one-liners (isRemoved / isAmended / isCorrected /
 // isAnnotated in vitals.adapters.ts) are mutual duplicates — but the right

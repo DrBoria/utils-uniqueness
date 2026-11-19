@@ -3,7 +3,7 @@
 // to .map(), and partial blocks.
 
 // 1. A NESTED function: a byte-for-byte copy of the canonical formatMoney
-// (tests/utils/numbers.ts) declared inside another function body.
+// (tests/NOT_duplicates/numbers.ts) declared inside another function body.
 export const outerWithNested = (amounts: number[], currency: string) => {
 	const formatOne = (amount: number, cur = "USD"): string => {
 		const sign = amount < 0 ? "-" : "";

@@ -19,7 +19,7 @@ const pluginDir = path.resolve(__dirname, "..");
 //   FALSE  contactTypes     -> enumValues       (0.76, label-map vs enum values)
 //   FALSE  isTerminalStatus -> celsiusToFahrenheit (0.55, bool check vs math)
 //   FALSE  any zero-arg     -> date/datetime    (0.53, deprecated throw-stubs)
-const CANON_ROOTS = ["tests/utils"];
+const CANON_ROOTS = ["tests/NOT_duplicates"];
 const APP_ROOTS = ["tests/duplicates", "tests/NOT_duplicates"];
 
 const buildConfig = () =>

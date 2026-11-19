@@ -9,12 +9,12 @@ const { whenReady } = require("../dist/playgrounds/typescript.js");
 
 const pluginDir = path.resolve(__dirname, "..");
 
-// Canonical utils (the public API) live in tests/utils; the app is scanned
+// Canonical utils (the public API) live in tests/NOT_duplicates; the app is scanned
 // across BOTH a `duplicates` folder (renamed copies of the canonicals) and a
 // `NOT_duplicates` folder (same shape, different operation). The pipeline must
 // flag the former as duplicates of the right canonical and must NOT flag the
 // latter.
-const CANON_ROOTS = ["tests/utils"];
+const CANON_ROOTS = ["tests/NOT_duplicates"];
 const APP_ROOTS = ["tests/duplicates", "tests/NOT_duplicates"];
 
 const buildConfig = () =>
@@ -46,7 +46,11 @@ describe("boundary — duplicates vs NOT_duplicates", () => {
 		expect(byName.get("toSlug")?.canon.name).toBe("slugify");
 		expect(byName.get("shorten")?.canon.name).toBe("truncate");
 		expect(byName.get("glue")?.canon.name).toBe("joinParts");
-		expect(byName.get("bound")?.canon.name).toBe("clamp");
+		// `bound` has several byte-identical canonical twins (clamp, clampValue,
+		// adjustVolume); the byName Map keeps only the LAST duplicate match, so
+		// assert the clamp pair SPECIFICALLY instead of whichever twin won.
+		const boundVsClamp = dupMatches.find((m: any) => m.app.name === "bound" && m.canon.name === "clamp");
+		expect(boundVsClamp?.decision.tier).toBe("duplicate");
 		expect(byName.get("money")?.canon.name).toBe("formatMoney");
 		expect(byName.get("totalUp")?.canon.name).toBe("safeSum");
 		expect(byName.get("keyMap")?.canon.name).toBe("indexBy");

@@ -8,24 +8,24 @@ const { normalizeOptions, isIgnored } = require("../dist/config.js");
 const { whenReady } = require("../dist/playgrounds/typescript.js");
 
 // ── ADVERSARIAL E2E ─────────────────────────────────────────────────────────
-// Runs the real pipeline against the adversarial/utils fixture (20 hard traps)
-// and scores every trap exactly as adversarial/run.cjs does. Locks the detector
-// ground truth so a future change cannot silently drop a caught trap or flag a
-// legitimate look-alike. The fixture lives OUTSIDE this package; if absent the
-// suite is skipped.
+// Runs the real pipeline against the adversarial fixtures (20 hard traps) and
+// scores every trap exactly as the old adversarial harness did. Locks the
+// detector ground truth so a future change cannot silently drop a caught trap
+// or flag a legitimate look-alike. The fixtures live INSIDE this package at
+// tests/duplicates (app side), tests/NOT_duplicates (canon side) with the trap
+// manifest at tests/manifest.json (see tests/TRAPS.md).
 //
 // Known, documented gaps are asserted as MISS (not silently passed): the AST-veto
 // (AST_VETO_THRESHOLD 0.75) intentionally demotes renamed/inlined copies whose
-// call graph differs (u01/u02/u06/u15/u16/u18) and u10 stays below `similar`.
+// call graph differs (u01/u02/u06/u15/u18) and u10 stays below `similar`.
+// (u16 is caught under the consolidated repo-root scan.)
 // This is a deliberate precision trade-off — do NOT weaken the veto to pass these.
 // No trap may FAIL (a false duplicate on an expect:none).
 
 const pluginDir = path.resolve(__dirname, "..");
-const fixtureDir = path.resolve(pluginDir, "../adversarial/utils");
-const manifestPath = path.join(fixtureDir, "manifest.json");
+const manifestPath = path.join(pluginDir, "tests", "manifest.json");
 
 const fs = require("node:fs") as typeof import("node:fs");
-const hasFixture = fs.existsSync(manifestPath);
 
 const pairKey = (a: string, b: string) => [a, b].sort().join("::");
 
@@ -36,20 +36,18 @@ const verdict = (expect: string, tiers: string[]): "PASS" | "MISS" | "FAIL" => {
 	return tiers.includes(expect) ? "PASS" : "MISS";
 };
 
-const maybe = hasFixture ? describe : describe.skip;
-
-maybe("adversarial utils e2e (fixture ground truth)", () => {
-	const manifest = hasFixture ? JSON.parse(fs.readFileSync(manifestPath, "utf8")) : { traps: [] };
+describe("adversarial utils e2e (fixture ground truth)", () => {
+	const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
 	let comp: any;
 
 	// Default thresholds (the fixture config sets none) — matching the harness.
 	const buildReport = async () => {
-		const config = normalizeOptions({ root: fixtureDir, utilsFolder: ["src/canon"], parts: true });
+		const config = normalizeOptions({ root: pluginDir, utilsFolder: ["tests/NOT_duplicates"], parts: true });
 		await whenReady(config);
 		return main.buildUtilsReport(
-			{ appRoots: ["src/app"], minCluster: 3, verbose: false, parts: true },
-			fixtureDir,
-			["src/canon"],
+			{ appRoots: ["tests/duplicates"], minCluster: 3, verbose: false, parts: true },
+			pluginDir,
+			["tests/NOT_duplicates"],
 			config,
 			null,
 			[],

@@ -20,9 +20,3 @@ export const findVitalId = (set: { vitals: { type: string; id: string }[] }, typ
 // real run) — a find-lookup with a `?? ""` fallback.
 export const orgName = (ident: { identifier?: { type: string; value?: string }[] }): string =>
 	ident?.identifier?.find((x) => x.type === "ORG")?.value ?? "";
-
-// A genuine COPY of splitGroupsValue (renamed receiver/property) — this one
-// MUST stay a duplicate (regression guard: the gate must demote only the
-// *unrelated* find-lookups, not a true twin).
-export const splitGroupsValueCopy = (outcome: { extension: { url: string; valueString?: string }[] }): string | undefined =>
-	outcome.extension.find((ext) => ext.url === "ORDER_SPLIT")?.valueString;

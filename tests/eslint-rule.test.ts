@@ -17,7 +17,7 @@ const { buildCandidate } = require("../dist/normalize/candidate.js");
 const rule = plugin.rules["utils-uniqueness"];
 const pluginDir = path.resolve(__dirname, "..");
 const repoRoot = path.resolve(pluginDir, "..");
-const canonDir = path.join(pluginDir, "tests", "utils");
+const canonDir = path.join(pluginDir, "tests", "NOT_duplicates");
 
 const rel = (abs) => path.relative(repoRoot, abs).split(path.sep).join("/");
 

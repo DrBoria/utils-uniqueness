@@ -1,4 +1,4 @@
-// A NON-exported copy of the canonical formatMoney (tests/utils/numbers.ts).
+// A NON-exported copy of the canonical formatMoney (tests/NOT_duplicates/numbers.ts).
 // There is no exported-only contract: the rule must flag this non-exported
 // copy exactly like any other duplicate.
 const hiddenMoney = (amount: number, currency = "USD"): string => {

@@ -29,3 +29,10 @@ export const moneyOrNone = (n: number | undefined): string | undefined =>
 // same-shape boolean check (`isTerminalStatus`) over-matched at 0.55 in the
 // real run (signature 0.00, structure 0.85, controlFlow 1.00).
 export const celsiusToFahrenheit = (degC: number): number => (degC * 9) / 5 + 32;
+
+// Smoke canon: a plain clamp helper.
+export function clampValue(value: number, min: number, max: number): number {
+	if (value < min) return min;
+	if (value > max) return max;
+	return value;
+}

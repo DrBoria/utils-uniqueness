@@ -23,7 +23,7 @@ const pluginDir = path.resolve(__dirname, "..");
 //   FALSE buildLinkedItemsList -> emptyTotals  (0.77, real builder vs zero-init)
 //   FALSE toNoteSnapshot       -> emptyTotals  (0.73, real builder vs zero-init)
 //   TRUE  emptyTotalsCopy      -> emptyTotals  (a genuine byte-shape twin)
-const CANON_ROOTS = ["tests/utils"];
+const CANON_ROOTS = ["tests/NOT_duplicates"];
 const APP_ROOTS = ["tests/duplicates", "tests/NOT_duplicates"];
 
 const buildConfig = () =>

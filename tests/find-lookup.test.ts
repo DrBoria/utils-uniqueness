@@ -26,7 +26,7 @@ const pluginDir = path.resolve(__dirname, "..");
 //   FALSE findVitalId-> splitGroupsValue  (0.70, different predicate/property)
 //   FALSE orgName    -> splitGroupsValue  (0.71, find + ?? "" fallback)
 //   TRUE  splitGroupsValueCopy -> splitGroupsValue  (a genuine twin)
-const CANON_ROOTS = ["tests/utils"];
+const CANON_ROOTS = ["tests/NOT_duplicates"];
 const APP_ROOTS = ["tests/duplicates", "tests/NOT_duplicates"];
 
 const buildConfig = () =>

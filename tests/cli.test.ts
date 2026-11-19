@@ -47,7 +47,7 @@ describe("CLI", () => {
 			const report = "reports/cli-files.md";
 			const catalog = path.join(pluginDir, "reports", "utils-catalog.json");
 			const before = existsSync(catalog) ? readFileSync(catalog, "utf8") : null;
-			const out = runCli(["--repo-root", ".", "--roots", "tests/utils", "--files", "tests/duplicates/stringDups.ts", "--report", report]);
+			const out = runCli(["--repo-root", ".", "--roots", "tests/NOT_duplicates", "--files", "tests/duplicates/stringDups.ts", "--report", report]);
 			const md = readReport(report);
 
 			expect(out).toContain("wrote report");
@@ -62,7 +62,7 @@ describe("CLI", () => {
 
 	it("--files silently skips missing files", () => {
 		const report = "reports/cli-files-missing.md";
-		runCli(["--repo-root", ".", "--files", "tests/utils/does-not-exist.ts", "--report", report]);
+		runCli(["--repo-root", ".", "--files", "tests/NOT_duplicates/does-not-exist.ts", "--report", report]);
 		const md = readReport(report);
 
 		expect(md).toContain("Scanned 0 app file(s)");

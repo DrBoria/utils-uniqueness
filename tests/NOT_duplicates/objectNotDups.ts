@@ -44,16 +44,3 @@ export const toNoteSnapshot = (note: { id: string; body: string; author: string 
 	skippedExisting: 0,
 	failed: note.body.includes("ERR") ? 1 : 0,
 });
-
-// A genuine COPY of emptyTotals — this one MUST stay a duplicate (regression
-// guard: the gate must demote only the *unrelated* object builders, not a true
-// twin of the trivial canonical).
-export const emptyTotalsCopy = () => ({
-	members: 0,
-	mappedRows: 0,
-	planned: 0,
-	created: 0,
-	skippedExisting: 0,
-	unresolvedMembers: 0,
-	failed: 0,
-});

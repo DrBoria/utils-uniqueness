@@ -16,8 +16,9 @@ const pluginDir = path.resolve(__dirname, "..");
 //   openChart (meds.e2e.ts)         ≈  openChart (problems.e2e.ts)
 // These are invisible to the canonical scan (which only matches app → canon),
 // so the flag surfaces them as "worth moving to utils".
-const APP_PAIR_ROOTS = ["tests/duplicates", "tests/Trash"];
-const CANON_ROOTS = ["tests/utils"];
+// tests/duplicates includes the Trash/ subfolder (valueless status guards).
+const APP_PAIR_ROOTS = ["tests/duplicates"];
+const CANON_ROOTS = ["tests/NOT_duplicates"];
 
 // A minimal candidate record — the clusterer only reads path/name/line and
 // decision.confidence, so no real parsing is needed for the pure tests.

@@ -12,7 +12,7 @@ const { buildCandidate } = require("../dist/normalize/candidate.js");
 const pluginDir = path.resolve(__dirname, "..");
 const relPosix = (abs: string) => path.relative(pluginDir, abs).split(path.sep).join("/");
 
-const CANON_ROOTS = ["tests/utils"];
+const CANON_ROOTS = ["tests/NOT_duplicates"];
 const APP_ROOTS = ["tests/duplicates", "tests/NOT_duplicates"];
 
 const buildConfig = () =>
@@ -28,7 +28,7 @@ describe("normalizeOptions", () => {
 		const config = buildConfig();
 
 		expect(config.root).toBe(pluginDir);
-		expect(config.utilsFolder).toEqual(["tests/utils/"]);
+		expect(config.utilsFolder).toEqual(["tests/NOT_duplicates/"]);
 		expect(config.parts).toBe(true);
 	});
 
@@ -92,13 +92,13 @@ describe("isIgnored", () => {
 	it("skips test files by default (they are not production utils)", () => {
 		const config = buildConfig();
 
-		expect(isIgnored("tests/utils/format.test.ts", [], config.exclude)).toBe(true);
-		expect(isIgnored("tests/utils/format.spec.ts", [], config.exclude)).toBe(true);
-		expect(isIgnored("tests/utils/format.e2e.ts", [], config.exclude)).toBe(true);
+		expect(isIgnored("tests/NOT_duplicates/format.test.ts", [], config.exclude)).toBe(true);
+		expect(isIgnored("tests/NOT_duplicates/format.spec.ts", [], config.exclude)).toBe(true);
+		expect(isIgnored("tests/NOT_duplicates/format.e2e.ts", [], config.exclude)).toBe(true);
 		// Story files are demo/prototype code — excluded like tests.
-		expect(isIgnored("tests/utils/format.stories.tsx", [], config.exclude)).toBe(true);
+		expect(isIgnored("tests/NOT_duplicates/format.stories.tsx", [], config.exclude)).toBe(true);
 		// Plain prod files are still scanned.
-		expect(isIgnored("tests/utils/format.ts", [], config.exclude)).toBe(false);
+		expect(isIgnored("tests/NOT_duplicates/format.ts", [], config.exclude)).toBe(false);
 	});
 });
 
